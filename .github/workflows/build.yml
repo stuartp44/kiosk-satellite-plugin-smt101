@@ -1,0 +1,79 @@
+name: Build plugin package
+
+on:
+  push:
+    branches:
+      - main
+      - 'copilot/**'
+  pull_request:
+  workflow_dispatch:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Determine release version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
+            tag="${GITHUB_REF_NAME#v}"
+            echo "plugin_version=${tag}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify Android SDK
+        shell: bash
+        run: |
+          echo "ANDROID_HOME=${ANDROID_HOME:-}"
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-}"
+          test -f "${ANDROID_HOME:-${ANDROID_SDK_ROOT}}/platforms/android-35/android.jar"
+          test -x "${ANDROID_HOME:-${ANDROID_SDK_ROOT}}/build-tools/35.0.0/d8" || \
+            test -x "${ANDROID_HOME:-${ANDROID_SDK_ROOT}}/build-tools/35.0.1/d8" || \
+            test -x "${ANDROID_HOME:-${ANDROID_SDK_ROOT}}/build-tools/36.0.0/d8" || \
+            test -x "${ANDROID_HOME:-${ANDROID_SDK_ROOT}}/build-tools/37.0.0/d8"
+
+      - name: Test and build package
+        shell: bash
+        run: |
+          args=(--no-daemon clean build -PandroidPlatform=35)
+          if [[ -n "${{ steps.version.outputs.plugin_version }}" ]]; then
+            args+=("-PpluginVersion=${{ steps.version.outputs.plugin_version }}")
+          fi
+          gradle "${args[@]}"
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: smt101-plugin-dist
+          path: |
+            dist/kiosk-satellite-plugin.json
+            dist/*.zip
+            dist/*.zip.sha256
+
+      - name: Attach release assets
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/kiosk-satellite-plugin.json
+            dist/*.zip
+            dist/*.zip.sha256

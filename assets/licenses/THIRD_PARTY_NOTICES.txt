@@ -1,0 +1,3 @@
+This phase-1 direct hardware build does not bundle any additional third-party runtime
+libraries beyond the Android/Java toolchain classes supplied by Kiosk Satellite and
+the platform at runtime.
