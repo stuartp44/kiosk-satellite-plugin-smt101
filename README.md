@@ -1,55 +1,41 @@
-# SMT101 MQTT Sensors for Kiosk Satellite
+# SMT101 Direct Sensors for Kiosk Satellite
 
-`kiosk-satellite-plugin-smt101` is an SDK 1 Kiosk Satellite plugin that subscribes to the MQTT topics published by the SMT101 control app and republishes the incoming readings as Kiosk Satellite entities for local Readings and Home Assistant exposure.
+`kiosk-satellite-plugin-smt101` is an SDK 1 Kiosk Satellite plugin that reads SMT101 temperature and humidity directly from device input events and republishes those readings as Kiosk Satellite entities for local Readings and Home Assistant exposure through Kiosk Satellite's native entity bridge.
 
 ## Purpose
 
-The SMT101 Android application already publishes its hardware readings over MQTT. This plugin consumes that MQTT stream inside Kiosk Satellite instead of trying to read the wall panel hardware directly. The first functional version focuses on read-only ingestion for:
+Phase 1 focuses on direct, read-only ingestion for:
 
 - temperature
 - humidity
-- light level
-- digital input 1
-- digital input 2
 
-Relay control is intentionally not exposed yet. The source SMT101 app publishes relay state topics, but this plugin does not create writable switch entities until command handling and state confirmation can be implemented safely.
+Light, inputs, relays, and LED control are intentionally not exposed in this phase. The direct hardware path is currently limited to the two values that the upstream SMT101 app derives from `getevent -l`.
 
 ## Supported entities
 
 When enabled, the plugin publishes these SDK 1 `entities` readings:
 
-| Entity | Type | Topic suffix | Metadata |
+| Entity | Type | Direct source | Metadata |
 | --- | --- | --- | --- |
-| SMT101 Temperature | Numeric sensor | `sensor/temperature` | unit `°C`, device class `temperature`, state class `measurement`, 1 decimal |
-| SMT101 Humidity | Numeric sensor | `sensor/humidity` | unit `%`, device class `humidity`, state class `measurement`, 0 decimals |
-| SMT101 Light | Numeric sensor | `sensor/light` | unit `lx`, device class `illuminance`, state class `measurement`, 0 decimals |
-| SMT101 Input 1 | Binary sensor | `input1/state` | read-only boolean |
-| SMT101 Input 2 | Binary sensor | `input2/state` | read-only boolean |
+| SMT101 Temperature | Numeric sensor | `getevent -l` `event<ths>` `ABS_THROTTLE` | unit `°C`, device class `temperature`, state class `measurement`, 1 decimal |
+| SMT101 Humidity | Numeric sensor | `getevent -l` `event<hum>` `001d` | unit `%`, device class `humidity`, state class `measurement`, 0 decimals |
 
-The plugin starts each enabled entity with an unknown value and updates it whenever a matching MQTT message arrives.
+The plugin starts each enabled entity with an unknown value and updates it whenever a matching input-event line arrives.
 
-## MQTT topics and payload parsing
+## Direct hardware behavior
 
-The default topic prefix is `smt101`, so the plugin subscribes to:
+At runtime the plugin:
 
-- `smt101/sensor/temperature`
-- `smt101/sensor/humidity`
-- `smt101/sensor/light`
-- `smt101/input1/state`
-- `smt101/input2/state`
+- starts `getevent -l`
+- reads the Android system properties used by the SMT101 app:
+  - `com.gulukai.ths`
+  - `com.gulukai.hum`
+- falls back to configured event device numbers if those properties are unavailable
+- parses the same event patterns used by the upstream SMT101 application:
+  - temperature: `ABS_THROTTLE`
+  - humidity: `001d`
 
-You can change the prefix to something like `floor1/smt101` and the same fixed suffixes are appended automatically.
-
-### Accepted payload forms
-
-The parser accepts plain values and common flat JSON objects so it can tolerate the formats documented by the SMT101 project:
-
-- numeric strings such as `23.5`, `45`, `120`
-- JSON objects such as `{"temperature":23.5}`, `{"humidity":45}`, `{"lux":120}`, `{"value":120}`
-- boolean-like strings such as `ON`, `OFF`, `true`, `false`, `1`, `0`
-- JSON objects such as `{"state":"ON"}`, `{"input":0}`, `{"value":true}`
-
-Malformed or unsupported payloads are ignored, logged through `host.log(...)`, and do not crash the plugin or Kiosk Satellite.
+This keeps phase 1 aligned with the direct approach used in `haade_panel_s504` without requiring MQTT.
 
 ## Configuration
 
@@ -57,15 +43,12 @@ The plugin manifest declares these settings:
 
 | Setting | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `mqttHost` | string | empty | Broker hostname or IP. Leaving this blank keeps the plugin idle. |
-| `mqttPort` | number | `1883` | Falls back to `8883` when TLS is enabled and an invalid port is supplied. |
-| `mqttUsername` | string | empty | Optional username. |
-| `mqttPassword` | string | empty | Optional password. Stored by Kiosk Satellite like any other plugin setting. |
-| `mqttTls` | boolean | `false` | Uses `ssl://` instead of `tcp://`. |
-| `mqttClientId` | string | empty | Optional explicit client ID. If blank, the plugin generates a per-session ID. |
-| `topicPrefix` | string | `smt101` | Prefix prepended to all supported SMT101 topic suffixes. Leading and trailing slashes are trimmed. |
-| `enableEnvironmentSensors` | boolean | `true` | Enables temperature, humidity, and light entities. |
-| `enableInputs` | boolean | `true` | Enables the two digital input entities. |
+| `enableTemperatureHumidity` | boolean | `true` | Enables the direct temperature and humidity entities. |
+| `temperatureEventDevice` | number | `7` | Fallback event device for temperature when property lookup fails. |
+| `humidityEventDevice` | number | `8` | Fallback event device for humidity when property lookup fails. |
+| `temperaturePropertyName` | string | `com.gulukai.ths` | System property used to discover the temperature event device. |
+| `humidityPropertyName` | string | `com.gulukai.hum` | System property used to discover the humidity event device. |
+| `geteventCommand` | string | `getevent -l` | Shell command used to stream sensor events. |
 
 ## Build and test
 
@@ -116,22 +99,22 @@ For release builds, pass `-PpluginVersion=1.2.3` so the packaged manifest and ZI
 
 ## Runtime behavior
 
-- The plugin connects asynchronously and retries after transient MQTT failures.
-- Settings changes cause the connection and subscriptions to refresh.
-- `host.status(...)` is used for connection state and errors.
-- `host.log(...)` is used for ignored commands, ignored events, invalid payloads, and subscription diagnostics.
-- `stop()` attempts to remove published entities and disconnect cleanly. Kiosk Satellite also removes plugin session entities when a session stops.
+- The plugin starts a background `getevent` reader asynchronously.
+- Settings changes stop the current reader and start a fresh one.
+- `host.status(...)` is used for startup, running, and restart/error messages.
+- `host.log(...)` is used for reader diagnostics.
+- `stop()` removes entities and stops the active shell reader process.
 
 ## Limitations and future work
 
-- Relay topics are intentionally not exposed as switches in this first version.
-- No shared Kiosk Satellite MQTT service is used; the plugin connects directly to the configured broker.
-- TLS currently uses the platform default trust store and does not expose custom CA or client certificate settings.
-- Only flat JSON objects and plain scalar payloads are parsed.
-- The plugin does not publish Home Assistant MQTT discovery directly; it relies on Kiosk Satellite's native entity bridge.
+- This phase only supports temperature and humidity.
+- It depends on the SMT101-specific `getevent` output format and system properties used by the upstream app.
+- It assumes `getevent` and `getprop` are available on the kiosk device.
+- It does not use vendor JNI libraries or direct Android `SensorManager` integration yet.
+- It does not publish Home Assistant MQTT discovery directly; it relies on Kiosk Satellite's native entity bridge.
 
 ## Licensing
 
 This repository is licensed under [Apache-2.0](LICENSE).
 
-Bundled dependency notes are included in [assets/licenses/THIRD_PARTY_NOTICES.txt](assets/licenses/THIRD_PARTY_NOTICES.txt). The only embedded runtime dependency is the Eclipse Paho MQTT Java client used for broker connectivity.
+Runtime dependency notes are included in [assets/licenses/THIRD_PARTY_NOTICES.txt](assets/licenses/THIRD_PARTY_NOTICES.txt).

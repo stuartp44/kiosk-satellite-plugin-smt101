@@ -1,10 +1,9 @@
 package com.stuartp44.smt101;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -12,38 +11,33 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
-import javax.net.ssl.SSLSocketFactory;
 import me.jxl.kiosk.plugins.KioskPlugin;
 import me.jxl.kiosk.plugins.PluginHost;
-import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
-import org.eclipse.paho.client.mqttv3.MqttAsyncClient;
-import org.eclipse.paho.client.mqttv3.MqttCallbackExtended;
-import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
-import org.eclipse.paho.client.mqttv3.MqttException;
-import org.eclipse.paho.client.mqttv3.MqttMessage;
-import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 
 public final class Smt101Plugin implements KioskPlugin {
-    private static final long INITIAL_RECONNECT_DELAY_SECONDS = 2L;
-    private static final long RETRY_RECONNECT_DELAY_SECONDS = 30L;
-    private static final long LOST_CONNECTION_DELAY_SECONDS = 5L;
+    private static final long RESTART_DELAY_SECONDS = 5L;
     private static final String TEMPERATURE_NAME = "SMT101 Temperature";
     private static final String HUMIDITY_NAME = "SMT101 Humidity";
-    private static final String LIGHT_NAME = "SMT101 Light";
-    private static final String INPUT1_NAME = "SMT101 Input 1";
-    private static final String INPUT2_NAME = "SMT101 Input 2";
-    private static final String NO_DEVICE_CLASS = "";
 
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(new PluginThreadFactory());
-    private final Smt101MessageProcessor messageProcessor = new Smt101MessageProcessor();
+    private final GeteventReadingParser readingParser = new GeteventReadingParser();
+    private final SystemPropertyReader propertyReader;
 
     private volatile PluginHost host;
     private volatile boolean running;
     private volatile Smt101Config config;
-    private MqttAsyncClient mqttClient;
-    private ScheduledFuture<?> reconnectFuture;
-    private String resolvedClientId;
-    private long clientGeneration;
+    private Process geteventProcess;
+    private Thread readerThread;
+    private ScheduledFuture<?> restartFuture;
+    private long readerGeneration;
+
+    public Smt101Plugin() {
+        this(new ShellSystemPropertyReader());
+    }
+
+    Smt101Plugin(SystemPropertyReader propertyReader) {
+        this.propertyReader = propertyReader;
+    }
 
     @Override
     public void start(PluginHost host, Map<String, Object> settings) {
@@ -70,7 +64,7 @@ public final class Smt101Plugin implements KioskPlugin {
     @Override
     public void stop() throws InterruptedException {
         running = false;
-        cancelReconnect();
+        cancelRestart();
         final CountDownLatch latch = new CountDownLatch(1);
         boolean completed = false;
         try {
@@ -79,7 +73,7 @@ public final class Smt101Plugin implements KioskPlugin {
                 public void run() {
                     try {
                         removeEntities();
-                        disconnectClient();
+                        stopReader();
                     } finally {
                         latch.countDown();
                     }
@@ -90,7 +84,7 @@ public final class Smt101Plugin implements KioskPlugin {
         }
         if (!completed) {
             removeEntities();
-            disconnectClient();
+            stopReader();
         }
         executor.shutdownNow();
     }
@@ -101,169 +95,149 @@ public final class Smt101Plugin implements KioskPlugin {
                 @Override
                 public void run() {
                     config = newConfig;
-                    if (!newConfig.getMqttClientId().isEmpty()) {
-                        resolvedClientId = null;
-                    }
                     publishConfiguredEntities(newConfig);
-                    if (!newConfig.hasBrokerHost()) {
-                        disconnectClient();
-                        safeStatus("Set MQTT broker host to start the SMT101 bridge.", false);
+                    stopReader();
+                    if (!newConfig.isTemperatureHumidityEnabled()) {
+                        safeStatus("Temperature and humidity are disabled.", false);
                         if (initialStart) {
-                            safeLog("SMT101 plugin is idle until MQTT broker host is configured.");
+                            safeLog("SMT101 phase 1 is idle until temperature and humidity are enabled.");
                         }
                         return;
                     }
-                    disconnectClient();
-                    safeStatus("Connecting to " + newConfig.brokerUri(), false);
-                    scheduleReconnect(INITIAL_RECONNECT_DELAY_SECONDS);
+                    startReader(newConfig.resolve(propertyReader));
                 }
             });
         } catch (RejectedExecutionException ignored) {
         }
     }
 
-    private void scheduleReconnect(long delaySeconds) {
-        cancelReconnect();
+    private void startReader(final Smt101ResolvedConfig resolvedConfig) {
+        cancelRestart();
+        stopReader();
         if (!running) {
             return;
         }
-        reconnectFuture = executor.schedule(new Runnable() {
+        try {
+            final Process process = new ProcessBuilder("sh", "-c", resolvedConfig.getGeteventCommand())
+                    .redirectErrorStream(true)
+                    .start();
+            geteventProcess = process;
+            readerGeneration += 1L;
+            final long generation = readerGeneration;
+            Thread thread = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    runReaderLoop(generation, resolvedConfig, process);
+                }
+            }, "smt101-getevent");
+            thread.setDaemon(true);
+            readerThread = thread;
+            safeStatus(
+                    "Listening for SMT101 temperature/humidity on event"
+                            + resolvedConfig.getTemperatureEventDevice()
+                            + " and event"
+                            + resolvedConfig.getHumidityEventDevice()
+                            + ".",
+                    false);
+            safeLog("Started direct SMT101 sensor reader with command: " + resolvedConfig.getGeteventCommand());
+            thread.start();
+        } catch (Exception exception) {
+            safeStatus("Failed to start getevent reader. Retrying soon.", true);
+            safeLog("Failed to start getevent reader: " + summarize(exception));
+            scheduleRestart(RESTART_DELAY_SECONDS);
+        }
+    }
+
+    private void scheduleRestart(final long delaySeconds) {
+        cancelRestart();
+        if (!running) {
+            return;
+        }
+        restartFuture = executor.schedule(new Runnable() {
             @Override
             public void run() {
-                connectClient();
+                Smt101Config activeConfig = currentConfig();
+                if (!activeConfig.isTemperatureHumidityEnabled()) {
+                    return;
+                }
+                startReader(activeConfig.resolve(propertyReader));
             }
         }, delaySeconds, TimeUnit.SECONDS);
     }
 
-    private void cancelReconnect() {
-        if (reconnectFuture != null) {
-            reconnectFuture.cancel(false);
-            reconnectFuture = null;
+    private void cancelRestart() {
+        if (restartFuture != null) {
+            restartFuture.cancel(false);
+            restartFuture = null;
         }
     }
 
-    private void connectClient() {
-        Smt101Config activeConfig = currentConfig();
-        if (!running || !activeConfig.hasBrokerHost()) {
-            return;
-        }
-        disconnectClient();
+    private void runReaderLoop(final long generation, Smt101ResolvedConfig resolvedConfig, Process process) {
+        BufferedReader reader = null;
         try {
-            clientGeneration += 1L;
-            long generation = clientGeneration;
-            MqttAsyncClient newClient = new MqttAsyncClient(activeConfig.brokerUri(), resolveClientId(activeConfig), new MemoryPersistence());
-            newClient.setCallback(new ClientCallback(generation));
-            mqttClient = newClient;
-            MqttConnectOptions options = new MqttConnectOptions();
-            options.setAutomaticReconnect(false);
-            options.setCleanSession(true);
-            options.setConnectionTimeout(10);
-            if (!activeConfig.getMqttUsername().isEmpty()) {
-                options.setUserName(activeConfig.getMqttUsername());
+            reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            while (running && generation == readerGeneration) {
+                String line = reader.readLine();
+                if (line == null) {
+                    break;
+                }
+                final GeteventReading reading = readingParser.parseLine(line, resolvedConfig);
+                if (reading == null) {
+                    continue;
+                }
+                try {
+                    executor.execute(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (running && generation == readerGeneration) {
+                                publishReading(reading);
+                            }
+                        }
+                    });
+                } catch (RejectedExecutionException ignored) {
+                    return;
+                }
             }
-            if (!activeConfig.getMqttPassword().isEmpty()) {
-                options.setPassword(activeConfig.getMqttPassword().toCharArray());
-            }
-            if (activeConfig.isMqttTls()) {
-                options.setSocketFactory((SSLSocketFactory) SSLSocketFactory.getDefault());
-            }
-            newClient.connect(options).waitForCompletion(10000L);
-            subscribeToTopics(activeConfig, newClient);
-            safeStatus("Connected to " + activeConfig.brokerUri(), false);
         } catch (Exception exception) {
-            safeStatus("MQTT connection failed. Retrying soon.", true);
-            safeLog("MQTT connect failed: " + summarize(exception));
-            disconnectClient();
-            scheduleReconnect(RETRY_RECONNECT_DELAY_SECONDS);
+            if (running && generation == readerGeneration) {
+                safeStatus("Direct sensor reader failed. Retrying soon.", true);
+                safeLog("Direct sensor reader failed: " + summarize(exception));
+            }
+        } finally {
+            try {
+                if (reader != null) {
+                    reader.close();
+                }
+            } catch (Exception ignored) {
+            }
+            process.destroy();
+            if (running && generation == readerGeneration) {
+                safeStatus("Sensor reader stopped. Restarting soon.", true);
+                scheduleRestart(RESTART_DELAY_SECONDS);
+            }
         }
-    }
-
-    private void subscribeToTopics(Smt101Config activeConfig, MqttAsyncClient client) throws MqttException {
-        String[] topics = activeConfig.subscriptionTopics();
-        if (topics.length == 0) {
-            safeStatus("All SMT101 entity groups are disabled.", false);
-            return;
-        }
-        int[] qos = new int[topics.length];
-        Arrays.fill(qos, 0);
-        client.subscribe(topics, qos).waitForCompletion(10000L);
-        safeLog("Subscribed to SMT101 topics under prefix " + activeConfig.getTopicPrefix());
-    }
-
-    private void handleConnectComplete(long generation, boolean reconnect, String serverUri) {
-        if (!isActiveGeneration(generation)) {
-            return;
-        }
-        safeLog((reconnect ? "Reconnected to " : "Connected to ") + serverUri);
-    }
-
-    private void handleConnectionLost(long generation, Throwable cause) {
-        if (!isActiveGeneration(generation)) {
-            return;
-        }
-        safeStatus("MQTT disconnected. Reconnecting…", true);
-        safeLog("MQTT connection lost: " + summarize(cause));
-        scheduleReconnect(LOST_CONNECTION_DELAY_SECONDS);
-    }
-
-    private void handleMessage(long generation, String topic, String payload) {
-        if (!isActiveGeneration(generation)) {
-            return;
-        }
-        ProcessedMessage processed = messageProcessor.process(currentConfig(), topic, payload);
-        if (!processed.isMatched()) {
-            return;
-        }
-        if (!processed.isValid()) {
-            safeLog("Ignoring malformed payload on " + topic + ": " + abbreviate(payload));
-            return;
-        }
-        publishProcessedMessage(processed);
-    }
-
-    private boolean isActiveGeneration(long generation) {
-        return running && generation == clientGeneration;
     }
 
     private void publishConfiguredEntities(Smt101Config activeConfig) {
-        if (activeConfig.isEnvironmentSensorsEnabled()) {
+        if (activeConfig.isTemperatureHumidityEnabled()) {
             safePublishSensor("temperature", TEMPERATURE_NAME, sensorMetadata("°C", "temperature", 1), null);
             safePublishSensor("humidity", HUMIDITY_NAME, sensorMetadata("%", "humidity", 0), null);
-            safePublishSensor("light", LIGHT_NAME, sensorMetadata("lx", "illuminance", 0), null);
         } else {
             safeRemoveSensor("temperature");
             safeRemoveSensor("humidity");
-            safeRemoveSensor("light");
-        }
-        if (activeConfig.isInputsEnabled()) {
-            safePublishBinarySensor("input1", INPUT1_NAME, NO_DEVICE_CLASS, null);
-            safePublishBinarySensor("input2", INPUT2_NAME, NO_DEVICE_CLASS, null);
-        } else {
-            safeRemoveBinarySensor("input1");
-            safeRemoveBinarySensor("input2");
         }
     }
 
-    private void publishProcessedMessage(ProcessedMessage processed) {
-        Smt101Topic topic = processed.getTopic();
-        if (topic == null) {
+    private void publishReading(GeteventReading reading) {
+        if (reading == null) {
             return;
         }
-        switch (topic) {
+        switch (reading.getType()) {
             case TEMPERATURE:
-                safePublishSensor("temperature", TEMPERATURE_NAME, sensorMetadata("°C", "temperature", 1), processed.getNumericValue());
+                safePublishSensor("temperature", TEMPERATURE_NAME, sensorMetadata("°C", "temperature", 1), Double.valueOf(reading.getValue()));
                 break;
             case HUMIDITY:
-                safePublishSensor("humidity", HUMIDITY_NAME, sensorMetadata("%", "humidity", 0), processed.getNumericValue());
-                break;
-            case LIGHT:
-                safePublishSensor("light", LIGHT_NAME, sensorMetadata("lx", "illuminance", 0), processed.getNumericValue());
-                break;
-            case INPUT1:
-                safePublishBinarySensor("input1", INPUT1_NAME, NO_DEVICE_CLASS, processed.getBinaryValue());
-                break;
-            case INPUT2:
-                safePublishBinarySensor("input2", INPUT2_NAME, NO_DEVICE_CLASS, processed.getBinaryValue());
+                safePublishSensor("humidity", HUMIDITY_NAME, sensorMetadata("%", "humidity", 0), Double.valueOf(reading.getValue()));
                 break;
             default:
                 break;
@@ -273,47 +247,32 @@ public final class Smt101Plugin implements KioskPlugin {
     private void removeEntities() {
         safeRemoveSensor("temperature");
         safeRemoveSensor("humidity");
-        safeRemoveSensor("light");
-        safeRemoveBinarySensor("input1");
-        safeRemoveBinarySensor("input2");
     }
 
-    private void disconnectClient() {
-        MqttAsyncClient client = mqttClient;
-        mqttClient = null;
-        clientGeneration += 1L;
-        if (client == null) {
+    private void stopReader() {
+        cancelRestart();
+        readerGeneration += 1L;
+        Thread thread = readerThread;
+        readerThread = null;
+        if (thread != null) {
+            thread.interrupt();
+        }
+        Process process = geteventProcess;
+        geteventProcess = null;
+        if (process == null) {
             return;
         }
         try {
-            client.setCallback(null);
-        } catch (RuntimeException ignored) {
-        }
-        try {
-            if (client.isConnected()) {
-                client.disconnect().waitForCompletion(5000L);
+            process.destroy();
+            if (!process.waitFor(1L, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
             }
         } catch (Exception ignored) {
-        } finally {
-            try {
-                client.close();
-            } catch (Exception ignored) {
-            }
         }
     }
 
     private Smt101Config currentConfig() {
         return config == null ? Smt101Config.fromSettings(null) : config;
-    }
-
-    private String resolveClientId(Smt101Config activeConfig) {
-        if (!activeConfig.getMqttClientId().isEmpty()) {
-            return activeConfig.getMqttClientId();
-        }
-        if (resolvedClientId == null || resolvedClientId.isEmpty()) {
-            resolvedClientId = "smt101-sensors-" + UUID.randomUUID().toString();
-        }
-        return resolvedClientId;
     }
 
     private static Map<String, Object> sensorMetadata(String unit, String deviceClass, int accuracyDecimals) {
@@ -347,28 +306,6 @@ public final class Smt101Plugin implements KioskPlugin {
         }
     }
 
-    private void safePublishBinarySensor(String key, String name, String deviceClass, Boolean state) {
-        PluginHost pluginHost = host;
-        if (pluginHost == null) {
-            return;
-        }
-        try {
-            pluginHost.publishBinarySensor(key, name, deviceClass, state);
-        } catch (RuntimeException ignored) {
-        }
-    }
-
-    private void safeRemoveBinarySensor(String key) {
-        PluginHost pluginHost = host;
-        if (pluginHost == null) {
-            return;
-        }
-        try {
-            pluginHost.removeBinarySensor(key);
-        } catch (RuntimeException ignored) {
-        }
-    }
-
     private void safeStatus(String message, boolean error) {
         PluginHost pluginHost = host;
         if (pluginHost == null) {
@@ -397,66 +334,6 @@ public final class Smt101Plugin implements KioskPlugin {
         }
         String message = throwable.getMessage();
         return (message == null || message.trim().isEmpty()) ? throwable.getClass().getSimpleName() : message.trim();
-    }
-
-    private static String abbreviate(String payload) {
-        if (payload == null) {
-            return "";
-        }
-        String normalized = payload.replace('\n', ' ').replace('\r', ' ').trim();
-        return normalized.length() <= 120 ? normalized : normalized.substring(0, 117) + "...";
-    }
-
-    private final class ClientCallback implements MqttCallbackExtended {
-        private final long generation;
-
-        private ClientCallback(long generation) {
-            this.generation = generation;
-        }
-
-        @Override
-        public void connectComplete(final boolean reconnect, final String serverURI) {
-            try {
-                executor.execute(new Runnable() {
-                    @Override
-                    public void run() {
-                        handleConnectComplete(generation, reconnect, serverURI);
-                    }
-                });
-            } catch (RejectedExecutionException ignored) {
-            }
-        }
-
-        @Override
-        public void connectionLost(final Throwable cause) {
-            try {
-                executor.execute(new Runnable() {
-                    @Override
-                    public void run() {
-                        handleConnectionLost(generation, cause);
-                    }
-                });
-            } catch (RejectedExecutionException ignored) {
-            }
-        }
-
-        @Override
-        public void messageArrived(final String topic, final MqttMessage message) {
-            final String payload = message == null ? "" : new String(message.getPayload(), StandardCharsets.UTF_8);
-            try {
-                executor.execute(new Runnable() {
-                    @Override
-                    public void run() {
-                        handleMessage(generation, topic, payload);
-                    }
-                });
-            } catch (RejectedExecutionException ignored) {
-            }
-        }
-
-        @Override
-        public void deliveryComplete(IMqttDeliveryToken token) {
-        }
     }
 
     private static final class PluginThreadFactory implements ThreadFactory {

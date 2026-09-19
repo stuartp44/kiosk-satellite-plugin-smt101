@@ -1,133 +1,74 @@
 package com.stuartp44.smt101;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 
 final class Smt101Config {
-    private static final int DEFAULT_PLAIN_PORT = 1883;
-    private static final int DEFAULT_TLS_PORT = 8883;
+    private static final int DEFAULT_HUMIDITY_EVENT_DEVICE = 8;
+    private static final int DEFAULT_TEMPERATURE_EVENT_DEVICE = 7;
+    private static final String DEFAULT_GETEVENT_COMMAND = "getevent -l";
+    private static final String DEFAULT_HUMIDITY_PROPERTY = "com.gulukai.hum";
+    private static final String DEFAULT_TEMPERATURE_PROPERTY = "com.gulukai.ths";
 
-    private final String mqttHost;
-    private final int mqttPort;
-    private final String mqttUsername;
-    private final String mqttPassword;
-    private final boolean mqttTls;
-    private final String mqttClientId;
-    private final String topicPrefix;
-    private final boolean enableEnvironmentSensors;
-    private final boolean enableInputs;
+    private final boolean enableTemperatureHumidity;
+    private final String geteventCommand;
+    private final int humidityEventDevice;
+    private final int temperatureEventDevice;
+    private final String humidityPropertyName;
+    private final String temperaturePropertyName;
 
     private Smt101Config(
-            String mqttHost,
-            int mqttPort,
-            String mqttUsername,
-            String mqttPassword,
-            boolean mqttTls,
-            String mqttClientId,
-            String topicPrefix,
-            boolean enableEnvironmentSensors,
-            boolean enableInputs) {
-        this.mqttHost = mqttHost;
-        this.mqttPort = mqttPort;
-        this.mqttUsername = mqttUsername;
-        this.mqttPassword = mqttPassword;
-        this.mqttTls = mqttTls;
-        this.mqttClientId = mqttClientId;
-        this.topicPrefix = topicPrefix;
-        this.enableEnvironmentSensors = enableEnvironmentSensors;
-        this.enableInputs = enableInputs;
+            boolean enableTemperatureHumidity,
+            String geteventCommand,
+            int humidityEventDevice,
+            int temperatureEventDevice,
+            String humidityPropertyName,
+            String temperaturePropertyName) {
+        this.enableTemperatureHumidity = enableTemperatureHumidity;
+        this.geteventCommand = geteventCommand;
+        this.humidityEventDevice = humidityEventDevice;
+        this.temperatureEventDevice = temperatureEventDevice;
+        this.humidityPropertyName = humidityPropertyName;
+        this.temperaturePropertyName = temperaturePropertyName;
     }
 
     static Smt101Config fromSettings(Map<String, Object> settings) {
-        boolean tls = getBoolean(settings, "mqttTls", false);
-        int port = getInteger(settings, "mqttPort", tls ? DEFAULT_TLS_PORT : DEFAULT_PLAIN_PORT);
-        if (port < 1 || port > 65535) {
-            port = tls ? DEFAULT_TLS_PORT : DEFAULT_PLAIN_PORT;
-        }
         return new Smt101Config(
-                getString(settings, "mqttHost", ""),
-                port,
-                getString(settings, "mqttUsername", ""),
-                getString(settings, "mqttPassword", ""),
-                tls,
-                getString(settings, "mqttClientId", ""),
-                normalizeTopicPrefix(getString(settings, "topicPrefix", "smt101")),
-                getBoolean(settings, "enableEnvironmentSensors", true),
-                getBoolean(settings, "enableInputs", true));
+                getBoolean(settings, "enableTemperatureHumidity", true),
+                getString(settings, "geteventCommand", DEFAULT_GETEVENT_COMMAND),
+                normalizedEventDevice(getInteger(settings, "humidityEventDevice", DEFAULT_HUMIDITY_EVENT_DEVICE), DEFAULT_HUMIDITY_EVENT_DEVICE),
+                normalizedEventDevice(getInteger(settings, "temperatureEventDevice", DEFAULT_TEMPERATURE_EVENT_DEVICE), DEFAULT_TEMPERATURE_EVENT_DEVICE),
+                getString(settings, "humidityPropertyName", DEFAULT_HUMIDITY_PROPERTY),
+                getString(settings, "temperaturePropertyName", DEFAULT_TEMPERATURE_PROPERTY));
     }
 
-    String getMqttHost() {
-        return mqttHost;
+    boolean isTemperatureHumidityEnabled() {
+        return enableTemperatureHumidity;
     }
 
-    int getMqttPort() {
-        return mqttPort;
+    Smt101ResolvedConfig resolve(SystemPropertyReader propertyReader) {
+        return new Smt101ResolvedConfig(
+                geteventCommand,
+                resolveEventDevice(propertyReader, humidityPropertyName, humidityEventDevice),
+                resolveEventDevice(propertyReader, temperaturePropertyName, temperatureEventDevice));
     }
 
-    String getMqttUsername() {
-        return mqttUsername;
-    }
-
-    String getMqttPassword() {
-        return mqttPassword;
-    }
-
-    boolean isMqttTls() {
-        return mqttTls;
-    }
-
-    String getMqttClientId() {
-        return mqttClientId;
-    }
-
-    String getTopicPrefix() {
-        return topicPrefix;
-    }
-
-    boolean isEnvironmentSensorsEnabled() {
-        return enableEnvironmentSensors;
-    }
-
-    boolean isInputsEnabled() {
-        return enableInputs;
-    }
-
-    boolean hasBrokerHost() {
-        return !mqttHost.isEmpty();
-    }
-
-    String brokerUri() {
-        return (mqttTls ? "ssl://" : "tcp://") + mqttHost + ":" + mqttPort;
-    }
-
-    String topic(String suffix) {
-        return topicPrefix + "/" + suffix;
-    }
-
-    String[] subscriptionTopics() {
-        List<String> topics = new ArrayList<String>();
-        if (enableEnvironmentSensors) {
-            topics.add(topic("sensor/temperature"));
-            topics.add(topic("sensor/humidity"));
-            topics.add(topic("sensor/light"));
+    private int resolveEventDevice(SystemPropertyReader propertyReader, String propertyName, int fallback) {
+        if (propertyReader == null || propertyName.isEmpty()) {
+            return fallback;
         }
-        if (enableInputs) {
-            topics.add(topic("input1/state"));
-            topics.add(topic("input2/state"));
+        try {
+            String value = propertyReader.read(propertyName);
+            if (value == null || value.trim().isEmpty()) {
+                return fallback;
+            }
+            return normalizedEventDevice(Integer.parseInt(value.trim()), fallback);
+        } catch (Exception ignored) {
+            return fallback;
         }
-        return topics.toArray(new String[0]);
     }
 
-    private static String normalizeTopicPrefix(String value) {
-        String normalized = value == null ? "" : value.trim();
-        while (normalized.startsWith("/")) {
-            normalized = normalized.substring(1);
-        }
-        while (normalized.endsWith("/")) {
-            normalized = normalized.substring(0, normalized.length() - 1);
-        }
-        return normalized.isEmpty() ? "smt101" : normalized;
+    private static int normalizedEventDevice(int value, int fallback) {
+        return value >= 0 ? value : fallback;
     }
 
     private static String getString(Map<String, Object> settings, String key, String fallback) {
@@ -135,7 +76,8 @@ final class Smt101Config {
             return fallback;
         }
         Object value = settings.get(key);
-        return value == null ? fallback : String.valueOf(value).trim();
+        String text = value == null ? fallback : String.valueOf(value).trim();
+        return text.isEmpty() ? fallback : text;
     }
 
     private static boolean getBoolean(Map<String, Object> settings, String key, boolean fallback) {
@@ -144,7 +86,7 @@ final class Smt101Config {
         }
         Object value = settings.get(key);
         if (value instanceof Boolean) {
-            return (Boolean) value;
+            return ((Boolean) value).booleanValue();
         }
         if (value instanceof String) {
             return Boolean.parseBoolean((String) value);
