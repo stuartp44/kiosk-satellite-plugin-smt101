@@ -3,6 +3,9 @@ import groovy.json.JsonSlurper
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.bundling.Zip
 import org.gradle.api.tasks.compile.JavaCompile
@@ -74,7 +77,6 @@ tasks.withType<Zip>().configureEach {
     isPreserveFileTimestamps = false
     isReproducibleFileOrder = true
     entryCompression = ZipEntryCompression.DEFLATED
-    includeEmptyDirs = false
 }
 
 tasks.withType<ProcessResources>().configureEach {
@@ -163,6 +165,33 @@ fun d8Binary(): File {
     return selected.resolve("d8")
 }
 
+fun stripDirectoryEntries(zipFile: File) {
+    val tempFile = zipFile.resolveSibling("${zipFile.name}.tmp")
+    ZipFile(zipFile).use { source ->
+        ZipOutputStream(tempFile.outputStream().buffered()).use { output ->
+            val seen = linkedSetOf<String>()
+            val entries = source.entries()
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                if (entry.isDirectory) {
+                    continue
+                }
+                require(seen.add(entry.name)) { "Duplicate ZIP entry ${entry.name}." }
+                val rewritten = ZipEntry(entry.name).apply {
+                    time = entry.time
+                    method = ZipEntry.DEFLATED
+                }
+                output.putNextEntry(rewritten)
+                source.getInputStream(entry).use { input -> input.copyTo(output) }
+                output.closeEntry()
+            }
+        }
+    }
+    require(zipFile.delete() && tempFile.renameTo(zipFile)) {
+        "Failed to rewrite ${zipFile.absolutePath} without directory entries."
+    }
+}
+
 val generatePackageManifest = tasks.register("generatePackageManifest") {
     inputs.file(manifestFile)
         .withPathSensitivity(PathSensitivity.RELATIVE)
@@ -233,6 +262,7 @@ val packagePlugin = tasks.register<Zip>("packagePlugin") {
     }
     doLast {
         val zipFile = archiveFile.get().asFile
+        stripDirectoryEntries(zipFile)
         require(zipFile.length() <= maxPackageBytes) {
             "Plugin ZIP must not exceed 4 MiB."
         }
