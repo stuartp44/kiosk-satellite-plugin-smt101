@@ -74,6 +74,7 @@ tasks.withType<Zip>().configureEach {
     isPreserveFileTimestamps = false
     isReproducibleFileOrder = true
     entryCompression = ZipEntryCompression.DEFLATED
+    isIncludeEmptyDirs = false
 }
 
 tasks.withType<ProcessResources>().configureEach {
