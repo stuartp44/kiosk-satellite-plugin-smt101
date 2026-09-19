@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "id": "smt101-sensors",
+  "name": "SMT101 MQTT Sensors",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "minAndroidSdk": 24,
+  "entryClass": "com.stuartp44.smt101.Smt101Plugin",
+  "description": "Subscribes to SMT101 MQTT topics and exposes temperature, humidity, light, and digital inputs as Kiosk Satellite entities.",
+  "author": "Stuart Pearson",
+  "license": "Apache-2.0",
+  "capabilities": [
+    "entities"
+  ],
+  "settings": [
+    {
+      "key": "mqttHost",
+      "type": "string",
+      "title": "MQTT broker host",
+      "default": "",
+      "group": "MQTT connection",
+      "description": "Broker hostname or IP address. Leave blank to keep the plugin idle."
+    },
+    {
+      "key": "mqttPort",
+      "type": "number",
+      "title": "MQTT broker port",
+      "default": 1883,
+      "min": 1,
+      "max": 65535,
+      "step": 1,
+      "group": "MQTT connection",
+      "description": "Broker port. Use 8883 for TLS or another port that matches your broker."
+    },
+    {
+      "key": "mqttUsername",
+      "type": "string",
+      "title": "MQTT username",
+      "default": "",
+      "group": "MQTT connection",
+      "description": "Optional MQTT username."
+    },
+    {
+      "key": "mqttPassword",
+      "type": "string",
+      "title": "MQTT password",
+      "default": "",
+      "group": "MQTT connection",
+      "description": "Optional MQTT password. Stored by Kiosk Satellite like any other plugin setting."
+    },
+    {
+      "key": "mqttTls",
+      "type": "boolean",
+      "title": "Use TLS",
+      "default": false,
+      "group": "MQTT connection",
+      "description": "Connect with ssl:// instead of tcp://."
+    },
+    {
+      "key": "mqttClientId",
+      "type": "string",
+      "title": "MQTT client ID",
+      "default": "",
+      "group": "MQTT connection",
+      "description": "Optional client ID. Leave blank to generate one automatically for each plugin session."
+    },
+    {
+      "key": "topicPrefix",
+      "type": "string",
+      "title": "Topic prefix",
+      "default": "smt101",
+      "group": "MQTT connection",
+      "description": "Prefix that precedes the fixed SMT101 topic suffixes, for example smt101 or floor1/smt101."
+    },
+    {
+      "key": "enableEnvironmentSensors",
+      "type": "boolean",
+      "title": "Enable temperature, humidity, and light",
+      "default": true,
+      "group": "Entity groups",
+      "description": "Expose the three numeric sensor entities."
+    },
+    {
+      "key": "enableInputs",
+      "type": "boolean",
+      "title": "Enable digital inputs",
+      "default": true,
+      "group": "Entity groups",
+      "description": "Expose input1 and input2 as binary sensors."
+    }
+  ],
+  "groups": [
+    {
+      "title": "MQTT connection"
+    },
+    {
+      "title": "Entity groups",
+      "readingsTitle": "SMT101 readings",
+      "readings": [
+        "sensor.temperature",
+        "sensor.humidity",
+        "sensor.light",
+        "binary_sensor.input1",
+        "binary_sensor.input2"
+      ]
+    }
+  ]
+}
