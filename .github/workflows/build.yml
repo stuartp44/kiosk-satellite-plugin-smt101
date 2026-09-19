@@ -31,9 +31,6 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Install Android SDK platform 35
-        uses: android-actions/setup-android@v3
-
       - name: Determine release version
         id: version
         shell: bash
@@ -42,6 +39,17 @@ jobs:
             tag="${GITHUB_REF_NAME#v}"
             echo "plugin_version=${tag}" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Verify Android SDK
+        shell: bash
+        run: |
+          echo "ANDROID_HOME=${ANDROID_HOME:-}"
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-}"
+          test -f "${ANDROID_HOME:-${ANDROID_SDK_ROOT}}/platforms/android-35/android.jar"
+          test -x "${ANDROID_HOME:-${ANDROID_SDK_ROOT}}/build-tools/35.0.0/d8" || \
+            test -x "${ANDROID_HOME:-${ANDROID_SDK_ROOT}}/build-tools/35.0.1/d8" || \
+            test -x "${ANDROID_HOME:-${ANDROID_SDK_ROOT}}/build-tools/36.0.0/d8" || \
+            test -x "${ANDROID_HOME:-${ANDROID_SDK_ROOT}}/build-tools/37.0.0/d8"
 
       - name: Test and build package
         shell: bash
