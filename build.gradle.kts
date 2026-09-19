@@ -2,6 +2,9 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
@@ -179,7 +182,12 @@ fun stripDirectoryEntries(zipFile: File) {
                 require(seen.add(entry.name)) { "Duplicate ZIP entry ${entry.name}." }
                 val rewritten = ZipEntry(entry.name).apply {
                     time = entry.time
-                    method = ZipEntry.DEFLATED
+                    method = entry.method
+                    comment = entry.comment
+                    extra = entry.extra
+                    size = entry.size
+                    compressedSize = entry.compressedSize
+                    crc = entry.crc
                 }
                 output.putNextEntry(rewritten)
                 source.getInputStream(entry).use { input -> input.copyTo(output) }
@@ -187,8 +195,10 @@ fun stripDirectoryEntries(zipFile: File) {
             }
         }
     }
-    require(zipFile.delete() && tempFile.renameTo(zipFile)) {
-        "Failed to rewrite ${zipFile.absolutePath} without directory entries."
+    try {
+        Files.move(tempFile.toPath(), zipFile.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+    } catch (_: AtomicMoveNotSupportedException) {
+        Files.move(tempFile.toPath(), zipFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
     }
 }
 
