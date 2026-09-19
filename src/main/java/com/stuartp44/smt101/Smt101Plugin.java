@@ -23,7 +23,7 @@ import org.eclipse.paho.client.mqttv3.MqttException;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 
-public final class Smt101Plugin implements KioskPlugin, MqttCallbackExtended {
+public final class Smt101Plugin implements KioskPlugin {
     private static final long INITIAL_RECONNECT_DELAY_SECONDS = 2L;
     private static final long RETRY_RECONNECT_DELAY_SECONDS = 30L;
     private static final long LOST_CONNECTION_DELAY_SECONDS = 5L;
@@ -32,6 +32,7 @@ public final class Smt101Plugin implements KioskPlugin, MqttCallbackExtended {
     private static final String LIGHT_NAME = "SMT101 Light";
     private static final String INPUT1_NAME = "SMT101 Input 1";
     private static final String INPUT2_NAME = "SMT101 Input 2";
+    private static final String NO_DEVICE_CLASS = "";
 
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(new PluginThreadFactory());
     private final Smt101MessageProcessor messageProcessor = new Smt101MessageProcessor();
@@ -42,6 +43,7 @@ public final class Smt101Plugin implements KioskPlugin, MqttCallbackExtended {
     private MqttAsyncClient mqttClient;
     private ScheduledFuture<?> reconnectFuture;
     private String resolvedClientId;
+    private long clientGeneration;
 
     @Override
     public void start(PluginHost host, Map<String, Object> settings) {
@@ -70,6 +72,7 @@ public final class Smt101Plugin implements KioskPlugin, MqttCallbackExtended {
         running = false;
         cancelReconnect();
         final CountDownLatch latch = new CountDownLatch(1);
+        boolean completed = false;
         try {
             executor.execute(new Runnable() {
                 @Override
@@ -82,64 +85,14 @@ public final class Smt101Plugin implements KioskPlugin, MqttCallbackExtended {
                     }
                 }
             });
-            latch.await(2, TimeUnit.SECONDS);
+            completed = latch.await(2, TimeUnit.SECONDS);
         } catch (RejectedExecutionException ignored) {
+        }
+        if (!completed) {
+            removeEntities();
             disconnectClient();
-        } finally {
-            executor.shutdownNow();
         }
-    }
-
-    @Override
-    public void connectComplete(boolean reconnect, String serverURI) {
-        safeLog((reconnect ? "Reconnected to " : "Connected to ") + serverURI);
-    }
-
-    @Override
-    public void connectionLost(final Throwable cause) {
-        if (!running) {
-            return;
-        }
-        try {
-            executor.execute(new Runnable() {
-                @Override
-                public void run() {
-                    safeStatus("MQTT disconnected. Reconnecting…", true);
-                    safeLog("MQTT connection lost: " + summarize(cause));
-                    scheduleReconnect(LOST_CONNECTION_DELAY_SECONDS);
-                }
-            });
-        } catch (RejectedExecutionException ignored) {
-        }
-    }
-
-    @Override
-    public void messageArrived(final String topic, final MqttMessage message) {
-        if (!running) {
-            return;
-        }
-        final String payload = message == null ? "" : new String(message.getPayload(), StandardCharsets.UTF_8);
-        try {
-            executor.execute(new Runnable() {
-                @Override
-                public void run() {
-                    ProcessedMessage processed = messageProcessor.process(currentConfig(), topic, payload);
-                    if (!processed.isMatched()) {
-                        return;
-                    }
-                    if (!processed.isValid()) {
-                        safeLog("Ignoring malformed payload on " + topic + ": " + abbreviate(payload));
-                        return;
-                    }
-                    publishProcessedMessage(processed);
-                }
-            });
-        } catch (RejectedExecutionException ignored) {
-        }
-    }
-
-    @Override
-    public void deliveryComplete(IMqttDeliveryToken token) {
+        executor.shutdownNow();
     }
 
     private void scheduleConfiguration(final Smt101Config newConfig, final boolean initialStart) {
@@ -195,8 +148,11 @@ public final class Smt101Plugin implements KioskPlugin, MqttCallbackExtended {
         }
         disconnectClient();
         try {
-            mqttClient = new MqttAsyncClient(activeConfig.brokerUri(), resolveClientId(activeConfig), new MemoryPersistence());
-            mqttClient.setCallback(this);
+            clientGeneration += 1L;
+            long generation = clientGeneration;
+            MqttAsyncClient newClient = new MqttAsyncClient(activeConfig.brokerUri(), resolveClientId(activeConfig), new MemoryPersistence());
+            newClient.setCallback(new ClientCallback(generation));
+            mqttClient = newClient;
             MqttConnectOptions options = new MqttConnectOptions();
             options.setAutomaticReconnect(false);
             options.setCleanSession(true);
@@ -210,8 +166,8 @@ public final class Smt101Plugin implements KioskPlugin, MqttCallbackExtended {
             if (activeConfig.isMqttTls()) {
                 options.setSocketFactory((SSLSocketFactory) SSLSocketFactory.getDefault());
             }
-            mqttClient.connect(options).waitForCompletion(10000L);
-            subscribeToTopics(activeConfig);
+            newClient.connect(options).waitForCompletion(10000L);
+            subscribeToTopics(activeConfig, newClient);
             safeStatus("Connected to " + activeConfig.brokerUri(), false);
         } catch (Exception exception) {
             safeStatus("MQTT connection failed. Retrying soon.", true);
@@ -221,7 +177,7 @@ public final class Smt101Plugin implements KioskPlugin, MqttCallbackExtended {
         }
     }
 
-    private void subscribeToTopics(Smt101Config activeConfig) throws MqttException {
+    private void subscribeToTopics(Smt101Config activeConfig, MqttAsyncClient client) throws MqttException {
         String[] topics = activeConfig.subscriptionTopics();
         if (topics.length == 0) {
             safeStatus("All SMT101 entity groups are disabled.", false);
@@ -229,8 +185,43 @@ public final class Smt101Plugin implements KioskPlugin, MqttCallbackExtended {
         }
         int[] qos = new int[topics.length];
         Arrays.fill(qos, 0);
-        mqttClient.subscribe(topics, qos).waitForCompletion(10000L);
+        client.subscribe(topics, qos).waitForCompletion(10000L);
         safeLog("Subscribed to SMT101 topics under prefix " + activeConfig.getTopicPrefix());
+    }
+
+    private void handleConnectComplete(long generation, boolean reconnect, String serverUri) {
+        if (!isActiveGeneration(generation)) {
+            return;
+        }
+        safeLog((reconnect ? "Reconnected to " : "Connected to ") + serverUri);
+    }
+
+    private void handleConnectionLost(long generation, Throwable cause) {
+        if (!isActiveGeneration(generation)) {
+            return;
+        }
+        safeStatus("MQTT disconnected. Reconnecting…", true);
+        safeLog("MQTT connection lost: " + summarize(cause));
+        scheduleReconnect(LOST_CONNECTION_DELAY_SECONDS);
+    }
+
+    private void handleMessage(long generation, String topic, String payload) {
+        if (!isActiveGeneration(generation)) {
+            return;
+        }
+        ProcessedMessage processed = messageProcessor.process(currentConfig(), topic, payload);
+        if (!processed.isMatched()) {
+            return;
+        }
+        if (!processed.isValid()) {
+            safeLog("Ignoring malformed payload on " + topic + ": " + abbreviate(payload));
+            return;
+        }
+        publishProcessedMessage(processed);
+    }
+
+    private boolean isActiveGeneration(long generation) {
+        return running && generation == clientGeneration;
     }
 
     private void publishConfiguredEntities(Smt101Config activeConfig) {
@@ -244,8 +235,8 @@ public final class Smt101Plugin implements KioskPlugin, MqttCallbackExtended {
             safeRemoveSensor("light");
         }
         if (activeConfig.isInputsEnabled()) {
-            safePublishBinarySensor("input1", INPUT1_NAME, "", null);
-            safePublishBinarySensor("input2", INPUT2_NAME, "", null);
+            safePublishBinarySensor("input1", INPUT1_NAME, NO_DEVICE_CLASS, null);
+            safePublishBinarySensor("input2", INPUT2_NAME, NO_DEVICE_CLASS, null);
         } else {
             safeRemoveBinarySensor("input1");
             safeRemoveBinarySensor("input2");
@@ -268,10 +259,10 @@ public final class Smt101Plugin implements KioskPlugin, MqttCallbackExtended {
                 safePublishSensor("light", LIGHT_NAME, sensorMetadata("lx", "illuminance", 0), processed.getNumericValue());
                 break;
             case INPUT1:
-                safePublishBinarySensor("input1", INPUT1_NAME, "", processed.getBinaryValue());
+                safePublishBinarySensor("input1", INPUT1_NAME, NO_DEVICE_CLASS, processed.getBinaryValue());
                 break;
             case INPUT2:
-                safePublishBinarySensor("input2", INPUT2_NAME, "", processed.getBinaryValue());
+                safePublishBinarySensor("input2", INPUT2_NAME, NO_DEVICE_CLASS, processed.getBinaryValue());
                 break;
             default:
                 break;
@@ -287,20 +278,26 @@ public final class Smt101Plugin implements KioskPlugin, MqttCallbackExtended {
     }
 
     private void disconnectClient() {
-        if (mqttClient == null) {
+        MqttAsyncClient client = mqttClient;
+        mqttClient = null;
+        clientGeneration += 1L;
+        if (client == null) {
             return;
         }
         try {
-            if (mqttClient.isConnected()) {
-                mqttClient.disconnect().waitForCompletion(5000L);
+            client.setCallback(null);
+        } catch (RuntimeException ignored) {
+        }
+        try {
+            if (client.isConnected()) {
+                client.disconnect().waitForCompletion(5000L);
             }
         } catch (Exception ignored) {
         } finally {
             try {
-                mqttClient.close();
+                client.close();
             } catch (Exception ignored) {
             }
-            mqttClient = null;
         }
     }
 
@@ -407,6 +404,58 @@ public final class Smt101Plugin implements KioskPlugin, MqttCallbackExtended {
         }
         String normalized = payload.replace('\n', ' ').replace('\r', ' ').trim();
         return normalized.length() <= 120 ? normalized : normalized.substring(0, 117) + "...";
+    }
+
+    private final class ClientCallback implements MqttCallbackExtended {
+        private final long generation;
+
+        private ClientCallback(long generation) {
+            this.generation = generation;
+        }
+
+        @Override
+        public void connectComplete(final boolean reconnect, final String serverURI) {
+            try {
+                executor.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        handleConnectComplete(generation, reconnect, serverURI);
+                    }
+                });
+            } catch (RejectedExecutionException ignored) {
+            }
+        }
+
+        @Override
+        public void connectionLost(final Throwable cause) {
+            try {
+                executor.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        handleConnectionLost(generation, cause);
+                    }
+                });
+            } catch (RejectedExecutionException ignored) {
+            }
+        }
+
+        @Override
+        public void messageArrived(final String topic, final MqttMessage message) {
+            final String payload = message == null ? "" : new String(message.getPayload(), StandardCharsets.UTF_8);
+            try {
+                executor.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        handleMessage(generation, topic, payload);
+                    }
+                });
+            } catch (RejectedExecutionException ignored) {
+            }
+        }
+
+        @Override
+        public void deliveryComplete(IMqttDeliveryToken token) {
+        }
     }
 
     private static final class PluginThreadFactory implements ThreadFactory {

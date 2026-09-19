@@ -31,6 +31,11 @@ class PayloadParsersTest {
     }
 
     @Test
+    void rejectsMalformedBracedNumericPayload() {
+        assertNull(PayloadParsers.parseNumeric("{\"lux\":120 garbage}", new String[]{"lux"}));
+    }
+
+    @Test
     void parsesBooleanLikeStrings() {
         assertTrue(PayloadParsers.parseBoolean("ON", new String[]{"state"}));
         assertEquals(Boolean.FALSE, PayloadParsers.parseBoolean("0", new String[]{"state"}));
@@ -40,6 +45,11 @@ class PayloadParsersTest {
     void parsesJsonBooleanPayload() {
         assertEquals(Boolean.TRUE, PayloadParsers.parseBoolean("{\"state\":\"true\"}", new String[]{"state"}));
         assertEquals(Boolean.FALSE, PayloadParsers.parseBoolean("{\"input\":\"OFF\"}", new String[]{"input"}));
+    }
+
+    @Test
+    void rejectsMalformedBracedBooleanPayload() {
+        assertNull(PayloadParsers.parseBoolean("{\"state\":\"ON\" garbage}", new String[]{"state"}));
     }
 
     @Test
