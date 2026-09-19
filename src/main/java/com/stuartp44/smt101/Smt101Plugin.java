@@ -43,22 +43,20 @@ public final class Smt101Plugin implements KioskPlugin {
     public void start(PluginHost host, Map<String, Object> settings) {
         this.host = host;
         this.running = true;
-        scheduleConfiguration(Smt101Config.fromSettings(settings), true);
+        scheduleConfiguration(Smt101Config.fromSettings(settings));
     }
 
     @Override
     public void configure(Map<String, Object> settings) {
-        scheduleConfiguration(Smt101Config.fromSettings(settings), false);
+        scheduleConfiguration(Smt101Config.fromSettings(settings));
     }
 
     @Override
     public void execute(String command, Map<String, Object> arguments) {
-        safeLog("Ignoring unsupported command: " + command);
     }
 
     @Override
     public void onEvent(String event, Map<String, Object> payload) {
-        safeLog("Ignoring unsupported event: " + event);
     }
 
     @Override
@@ -89,7 +87,7 @@ public final class Smt101Plugin implements KioskPlugin {
         executor.shutdownNow();
     }
 
-    private void scheduleConfiguration(final Smt101Config newConfig, final boolean initialStart) {
+    private void scheduleConfiguration(final Smt101Config newConfig) {
         try {
             executor.execute(new Runnable() {
                 @Override
@@ -97,13 +95,6 @@ public final class Smt101Plugin implements KioskPlugin {
                     config = newConfig;
                     publishConfiguredEntities(newConfig);
                     stopReader();
-                    if (!newConfig.isTemperatureHumidityEnabled()) {
-                        safeStatus("Temperature and humidity are disabled.", false);
-                        if (initialStart) {
-                            safeLog("SMT101 phase 1 is idle until temperature and humidity are enabled.");
-                        }
-                        return;
-                    }
                     startReader(newConfig.resolve(propertyReader));
                 }
             });
@@ -156,11 +147,7 @@ public final class Smt101Plugin implements KioskPlugin {
         restartFuture = executor.schedule(new Runnable() {
             @Override
             public void run() {
-                Smt101Config activeConfig = currentConfig();
-                if (!activeConfig.isTemperatureHumidityEnabled()) {
-                    return;
-                }
-                startReader(activeConfig.resolve(propertyReader));
+                startReader(currentConfig().resolve(propertyReader));
             }
         }, delaySeconds, TimeUnit.SECONDS);
     }
@@ -219,13 +206,8 @@ public final class Smt101Plugin implements KioskPlugin {
     }
 
     private void publishConfiguredEntities(Smt101Config activeConfig) {
-        if (activeConfig.isTemperatureHumidityEnabled()) {
-            safePublishSensor("temperature", TEMPERATURE_NAME, sensorMetadata("°C", "temperature", 1), null);
-            safePublishSensor("humidity", HUMIDITY_NAME, sensorMetadata("%", "humidity", 0), null);
-        } else {
-            safeRemoveSensor("temperature");
-            safeRemoveSensor("humidity");
-        }
+        safePublishSensor("temperature", TEMPERATURE_NAME, sensorMetadata("°C", "temperature", 1), null);
+        safePublishSensor("humidity", HUMIDITY_NAME, sensorMetadata("%", "humidity", 0), null);
     }
 
     private void publishReading(GeteventReading reading) {

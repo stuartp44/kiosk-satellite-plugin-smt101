@@ -43,7 +43,6 @@ The plugin manifest declares these settings:
 
 | Setting | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `enableTemperatureHumidity` | boolean | `true` | Enables the direct temperature and humidity entities. |
 | `temperatureEventDevice` | number | `7` | Fallback event device for temperature when property lookup fails. |
 | `humidityEventDevice` | number | `8` | Fallback event device for humidity when property lookup fails. |
 | `temperaturePropertyName` | string | `com.gulukai.ths` | System property used to discover the temperature event device. |

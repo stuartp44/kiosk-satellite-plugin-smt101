@@ -14,14 +14,6 @@
   ],
   "settings": [
     {
-      "key": "enableTemperatureHumidity",
-      "type": "boolean",
-      "title": "Enable temperature and humidity",
-      "default": true,
-      "group": "Temperature and humidity",
-      "description": "Expose direct SMT101 temperature and humidity entities."
-    },
-    {
       "key": "temperatureEventDevice",
       "type": "number",
       "title": "Temperature event device",

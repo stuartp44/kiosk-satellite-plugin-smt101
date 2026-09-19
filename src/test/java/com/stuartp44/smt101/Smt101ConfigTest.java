@@ -5,8 +5,6 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class Smt101ConfigTest {
     @Test
@@ -43,15 +41,5 @@ class Smt101ConfigTest {
         assertEquals(7, resolved.getTemperatureEventDevice());
         assertEquals(8, resolved.getHumidityEventDevice());
         assertEquals("getevent -l", resolved.getGeteventCommand());
-    }
-
-    @Test
-    void parsesBooleanSetting() {
-        Map<String, Object> settings = new HashMap<String, Object>();
-        settings.put("enableTemperatureHumidity", Boolean.FALSE);
-        Smt101Config config = Smt101Config.fromSettings(settings);
-        assertFalse(config.isTemperatureHumidityEnabled());
-        Smt101Config defaultConfig = Smt101Config.fromSettings(null);
-        assertTrue(defaultConfig.isTemperatureHumidityEnabled());
     }
 }
