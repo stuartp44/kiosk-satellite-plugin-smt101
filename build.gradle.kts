@@ -185,9 +185,11 @@ fun stripDirectoryEntries(zipFile: File) {
                     method = entry.method
                     comment = entry.comment
                     extra = entry.extra
-                    size = entry.size
-                    compressedSize = entry.compressedSize
-                    crc = entry.crc
+                    if (entry.method == ZipEntry.STORED) {
+                        size = entry.size
+                        compressedSize = entry.compressedSize
+                        crc = entry.crc
+                    }
                 }
                 output.putNextEntry(rewritten)
                 source.getInputStream(entry).use { input -> input.copyTo(output) }
