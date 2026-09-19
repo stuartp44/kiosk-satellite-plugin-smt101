@@ -118,13 +118,13 @@ final class PayloadParsers {
             ParsedString parsedString = parseJsonString(payload, start);
             return parsedString == null ? null : new ParsedToken(parsedString.value, parsedString.nextIndex);
         }
-        if (payload.startsWith("true", start)) {
+        if (matchesLiteral(payload, start, "true")) {
             return new ParsedToken("true", start + 4);
         }
-        if (payload.startsWith("false", start)) {
+        if (matchesLiteral(payload, start, "false")) {
             return new ParsedToken("false", start + 5);
         }
-        if (payload.startsWith("null", start)) {
+        if (matchesLiteral(payload, start, "null")) {
             return new ParsedToken("null", start + 4);
         }
         return parseNumberToken(payload, start);
@@ -192,6 +192,17 @@ final class PayloadParsers {
                     case 't':
                         builder.append('\t');
                         break;
+                    case 'u':
+                        if (index + 4 >= payload.length()) {
+                            return null;
+                        }
+                        int codePoint = parseHex(payload, index + 1, index + 5);
+                        if (codePoint < 0) {
+                            return null;
+                        }
+                        builder.append((char) codePoint);
+                        index += 4;
+                        break;
                     default:
                         return null;
                 }
@@ -203,6 +214,30 @@ final class PayloadParsers {
             index++;
         }
         return null;
+    }
+
+    private static int parseHex(String payload, int start, int endExclusive) {
+        int value = 0;
+        for (int index = start; index < endExclusive; index++) {
+            int digit = Character.digit(payload.charAt(index), 16);
+            if (digit < 0) {
+                return -1;
+            }
+            value = (value << 4) + digit;
+        }
+        return value;
+    }
+
+    private static boolean matchesLiteral(String payload, int start, String literal) {
+        if (!payload.startsWith(literal, start)) {
+            return false;
+        }
+        int nextIndex = start + literal.length();
+        return nextIndex >= payload.length() || isJsonTerminator(payload.charAt(nextIndex));
+    }
+
+    private static boolean isJsonTerminator(char current) {
+        return Character.isWhitespace(current) || current == ',' || current == '}';
     }
 
     private static Double parseDoubleToken(String token) {

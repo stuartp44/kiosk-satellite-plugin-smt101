@@ -48,6 +48,11 @@ class PayloadParsersTest {
     }
 
     @Test
+    void parsesUnicodeEscapedJsonStrings() {
+        assertEquals(Boolean.TRUE, PayloadParsers.parseBoolean("{\"state\":\"\\u004f\\u004e\"}", new String[]{"state"}));
+    }
+
+    @Test
     void rejectsMalformedBracedBooleanPayload() {
         assertNull(PayloadParsers.parseBoolean("{\"state\":\"ON\" garbage}", new String[]{"state"}));
     }

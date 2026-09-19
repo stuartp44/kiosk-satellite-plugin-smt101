@@ -45,8 +45,6 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks.withType<JavaCompile>().configureEach {
