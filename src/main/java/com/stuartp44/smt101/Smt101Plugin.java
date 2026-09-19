@@ -113,6 +113,7 @@ public final class Smt101Plugin implements KioskPlugin {
                         }
                         return;
                     }
+                    disconnectClient();
                     safeStatus("Connecting to " + newConfig.brokerUri(), false);
                     scheduleReconnect(INITIAL_RECONNECT_DELAY_SECONDS);
                 }

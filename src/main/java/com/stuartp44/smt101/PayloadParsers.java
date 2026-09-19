@@ -154,6 +154,23 @@ final class PayloadParsers {
         if (!digitsBeforeDecimal && digitsAfterDecimal && payload.charAt(start) != '.') {
             return null;
         }
+        if (index < payload.length() && (payload.charAt(index) == 'e' || payload.charAt(index) == 'E')) {
+            int exponentStart = index;
+            index++;
+            if (index < payload.length() && (payload.charAt(index) == '+' || payload.charAt(index) == '-')) {
+                index++;
+            }
+            int exponentDigitsStart = index;
+            while (index < payload.length() && Character.isDigit(payload.charAt(index))) {
+                index++;
+            }
+            if (index == exponentDigitsStart) {
+                return null;
+            }
+            if (index == exponentStart + 1) {
+                return null;
+            }
+        }
         return new ParsedToken(payload.substring(start, index), index);
     }
 

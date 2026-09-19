@@ -26,6 +26,12 @@ class PayloadParsersTest {
     }
 
     @Test
+    void parsesJsonNumericPayloadWithExponent() {
+        Double value = PayloadParsers.parseNumeric("{\"temperature\":1.25e1}", new String[]{"temperature"});
+        assertEquals(12.5d, value.doubleValue(), 0.0001d);
+    }
+
+    @Test
     void rejectsMalformedNumericPayload() {
         assertNull(PayloadParsers.parseNumeric("{\"temperature\":\"warm\"}", new String[]{"temperature"}));
     }
