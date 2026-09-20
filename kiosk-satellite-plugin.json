@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "id": "smt101-sensors",
-  "name": "SMT101 Direct Sensors",
-  "version": "0.1.0",
+  "name": "SMT101 Sensors",
+  "version": "0.1.33",
   "apiVersion": 1,
   "minAndroidSdk": 24,
   "entryClass": "com.stuartp44.smt101.Smt101Plugin",
-  "description": "Reads SMT101 temperature and humidity directly from device input events and exposes them as Kiosk Satellite entities.",
+  "description": "Hardware integration for the confirmed ZX-SMT1019-R157-V1.0A-10.1-GG-K1.29U-20260707 tablet, exposing its OEM MQTT sensors, switches, doors, and RGB backlight.",
   "author": "Stuart Pearson",
   "license": "Apache-2.0",
   "capabilities": [
@@ -14,59 +14,33 @@
   ],
   "settings": [
     {
-      "key": "temperatureEventDevice",
-      "type": "number",
-      "title": "Temperature event device",
-      "default": 7,
-      "min": 0,
-      "max": 32,
-      "step": 1,
-      "group": "Temperature and humidity",
-      "description": "Fallback event device number used when the SMT101 temperature system property is unavailable."
+      "key": "enableEmbeddedMqttBroker",
+      "type": "boolean",
+      "title": "Host MQTT capture broker on this tablet",
+      "default": true,
+      "group": "Embedded MQTT broker",
+      "description": "Listens only on 127.0.0.1 for the OEM MQTT client running on this tablet, maps sensor publications to entities, and sends RGB backlight commands through the OEM MQTT topics. Connections from other devices are not accepted."
     },
     {
-      "key": "humidityEventDevice",
-      "type": "number",
-      "title": "Humidity event device",
-      "default": 8,
-      "min": 0,
-      "max": 32,
-      "step": 1,
-      "group": "Temperature and humidity",
-      "description": "Fallback event device number used when the SMT101 humidity system property is unavailable."
-    },
-    {
-      "key": "temperaturePropertyName",
+      "key": "mqttClientId",
       "type": "string",
-      "title": "Temperature property name",
-      "default": "com.gulukai.ths",
-      "group": "Temperature and humidity",
-      "description": "Android system property used to discover the temperature event device."
-    },
-    {
-      "key": "humidityPropertyName",
-      "type": "string",
-      "title": "Humidity property name",
-      "default": "com.gulukai.hum",
-      "group": "Temperature and humidity",
-      "description": "Android system property used to discover the humidity event device."
-    },
-    {
-      "key": "geteventCommand",
-      "type": "string",
-      "title": "getevent command",
-      "default": "getevent -l",
-      "group": "Temperature and humidity",
-      "description": "Shell command used to stream direct SMT101 input events."
+      "title": "MQTT client ID (optional)",
+      "default": "",
+      "group": "Embedded MQTT broker",
+      "description": "Must match client_id in the tablet's MQTT settings, for example office. The OEM client uses this value as its MQTT topic prefix. Leave blank to learn it automatically from status publications."
     }
   ],
   "groups": [
     {
-      "title": "Temperature and humidity",
-      "readingsTitle": "SMT101 readings",
+      "title": "Embedded MQTT broker",
+      "readingsTitle": "Sensor readings",
       "readings": [
         "sensor.temperature",
-        "sensor.humidity"
+        "sensor.humidity",
+        "switch.switch1",
+        "switch.switch2",
+        "binary_sensor.door1",
+        "binary_sensor.door2"
       ]
     }
   ]

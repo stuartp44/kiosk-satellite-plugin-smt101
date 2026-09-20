@@ -1,25 +1,28 @@
 package com.stuartp44.smt101;
 
 final class Smt101ResolvedConfig {
-    private final String geteventCommand;
-    private final int humidityEventDevice;
-    private final int temperatureEventDevice;
+    private final boolean embeddedMqttBrokerEnabled;
+    private final String mqttTopicPrefix;
+    private final boolean mqttTopicPrefixValid;
 
-    Smt101ResolvedConfig(String geteventCommand, int humidityEventDevice, int temperatureEventDevice) {
-        this.geteventCommand = geteventCommand;
-        this.humidityEventDevice = humidityEventDevice;
-        this.temperatureEventDevice = temperatureEventDevice;
+    Smt101ResolvedConfig(
+            boolean embeddedMqttBrokerEnabled,
+            String mqttTopicPrefix,
+            boolean mqttTopicPrefixValid) {
+        this.embeddedMqttBrokerEnabled = embeddedMqttBrokerEnabled;
+        this.mqttTopicPrefix = mqttTopicPrefix;
+        this.mqttTopicPrefixValid = mqttTopicPrefixValid;
     }
 
-    String getGeteventCommand() {
-        return geteventCommand;
+    boolean isEmbeddedMqttBrokerEnabled() {
+        return embeddedMqttBrokerEnabled;
     }
 
-    int getHumidityEventDevice() {
-        return humidityEventDevice;
+    String getMqttTopicPrefix() {
+        return mqttTopicPrefix;
     }
 
-    int getTemperatureEventDevice() {
-        return temperatureEventDevice;
+    boolean isMqttTopicPrefixValid() {
+        return mqttTopicPrefixValid;
     }
 }

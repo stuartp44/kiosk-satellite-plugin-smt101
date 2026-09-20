@@ -1,119 +1,139 @@
-# SMT101 Direct Sensors for Kiosk Satellite
+# SMT101 Sensors for Kiosk Satellite
 
-`kiosk-satellite-plugin-smt101` is an SDK 1 Kiosk Satellite plugin that reads SMT101 temperature and humidity directly from device input events and republishes those readings as Kiosk Satellite entities for local Readings and Home Assistant exposure through Kiosk Satellite's native entity bridge.
+This SDK 1 Kiosk Satellite plugin exposes the tablet's temperature,
+humidity, switch/door inputs, and RGB backlight as Kiosk Satellite entities.
 
-## Purpose
+## Confirmed hardware
 
-Phase 1 focuses on direct, read-only ingestion for:
+This plugin is developed and confirmed against:
 
-- temperature
-- humidity
+```text
+ZX-SMT1019-R157-V1.0A-10.1-GG-K1.29U-20260707
+```
 
-Light, inputs, relays, and LED control are intentionally not exposed in this phase. The direct hardware path is currently limited to the two values that the upstream SMT101 app derives from `getevent -l`.
+Other SMT101-family devices or firmware versions may use different MQTT
+topics, payloads, or hardware interfaces and are not currently confirmed.
 
-## Supported entities
+## Sensor sources
 
-When enabled, the plugin publishes these SDK 1 `entities` readings:
+| Entity | Source | Metadata |
+| --- | --- | --- |
+| Temperature | OEM MQTT publication | `°C`, temperature, measurement, 1 decimal |
+| Humidity | OEM MQTT publication | `%`, humidity, measurement, 0 decimals |
+| Switch 1 / Switch 2 | OEM MQTT status and command topics | Writable switches |
+| Door 1 / Door 2 | OEM MQTT status publications | Binary sensors with the `door` device class |
+| RGB Backlight | OEM MQTT command and state topics | On/off, brightness, and RGB color |
 
-| Entity | Type | Direct source | Metadata |
-| --- | --- | --- | --- |
-| SMT101 Temperature | Numeric sensor | `getevent -l` `event<ths>` `ABS_THROTTLE` | unit `°C`, device class `temperature`, state class `measurement`, 1 decimal |
-| SMT101 Humidity | Numeric sensor | `getevent -l` `event<hum>` `001d` | unit `%`, device class `humidity`, state class `measurement`, 0 decimals |
-
-The plugin starts each enabled entity with an unknown value and updates it whenever a matching input-event line arrives.
-
-## Direct hardware behavior
-
-At runtime the plugin:
-
-- starts `getevent -l`
-- reads the Android system properties used by the SMT101 app:
-  - `com.gulukai.ths`
-  - `com.gulukai.hum`
-- falls back to configured event device numbers if those properties are unavailable
-- parses the same event patterns used by the upstream SMT101 application:
-  - temperature: `ABS_THROTTLE`
-  - humidity: `001d`
-
-This keeps phase 1 aligned with the direct approach used in `haade_panel_s504` without requiring MQTT.
+The plugin does not request Shizuku access, inspect `/dev/input`, or call
+the OEM `com.broadcastinterface` diagnostic service.
 
 ## Configuration
 
-The plugin manifest declares these settings:
-
 | Setting | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `temperatureEventDevice` | number | `7` | Fallback event device for temperature when property lookup fails. |
-| `humidityEventDevice` | number | `8` | Fallback event device for humidity when property lookup fails. |
-| `temperaturePropertyName` | string | `com.gulukai.ths` | System property used to discover the temperature event device. |
-| `humidityPropertyName` | string | `com.gulukai.hum` | System property used to discover the humidity event device. |
-| `geteventCommand` | string | `getevent -l` | Shell command used to stream sensor events. |
+| `enableEmbeddedMqttBroker` | boolean | `true` | Hosts the MQTT capture broker used to receive OEM sensor publications. |
+| `mqttClientId` | string | blank | Must match `client_id` in the tablet's MQTT settings, such as `office`. Blank enables automatic discovery. |
+
+## Embedded MQTT sensor bridge
+
+Point the tablet's OEM `iot_mqtt_client` at `127.0.0.1` and port `1883`.
+The broker port is fixed and is not exposed as a plugin setting.
+The broker binds exclusively to IPv4 loopback, so connections from the
+tablet's LAN address or another device are not accepted. It supports MQTT
+3.1, 3.1.1, and 5 and the protocol operations needed to capture
+publications. It is not a general-purpose persistent broker.
+It accepts multiple concurrent loopback clients, allowing OEM builds that
+use separate MQTT connections for sensor publishing and command
+subscriptions to operate correctly.
+
+The broker recognizes these topic tokens:
+
+- Temperature: `temperature`, `temp`, `ths`
+- Humidity: `humidity`, `humid`, `hum`, `moisture`
+
+Payloads may be plain numbers or JSON objects with matching keys. Known OEM
+examples are:
+
+```text
+office/sensors/temperature {"temperature":26.4}
+office/sensors/humidity {"humidity":38.5}
+office/switch1/status {"state":"OFF"}
+office/switch2/status {"state":"OFF"}
+office/door1/status {"state":"OFF"}
+office/door2/status {"state":"OFF"}
+```
+
+The prefix is not fixed: any topic ending in `/switch1/status`,
+`/switch2/status`, `/door1/status`, or `/door2/status` is recognized.
+`ON` maps to active/open and `OFF` maps to inactive/closed.
+Switch commands are published as plain `ON` or `OFF` payloads to the
+corresponding `/switch1/set` and `/switch2/set` topic. Switch status
+publications remain JSON, for example `{"state":"ON"}`. The switches appear
+after their first status publication establishes a confirmed state and
+topic prefix.
+
+The RGB backlight learns the topic prefix (for example `office`) from the
+tablet's live status publications:
+
+```text
+office/light/status       {"state":"OFF"}
+office/brightness/status  {"brightness":20}
+office/rgb/status         {"rgb":[255,255,255]}
+```
+
+Power commands are sent to `light/switch` as plain `ON` or `OFF` payloads.
+RGB commands are sent to `rgb/set` as plain comma-separated channels such
+as `255,193,141`. Brightness commands use `brightness/set` with a plain
+0–100 value. Status publications remain JSON.
+`office/backlight/status` is the tablet display backlight, not the RGB
+light, and is intentionally ignored.
+
+### MQTT client ID and topic prefix
+
+The **MQTT client ID (optional)** setting corresponds to `client_id` in the
+tablet's MQTT settings. The OEM client also uses that value as the prefix for
+its status and command topics. In the examples above the `client_id` is
+`office`, but another tablet may use `kitchen` or `hall-panel`.
+
+Leave **MQTT client ID (optional)** blank to learn the prefix from the
+tablet's `/status` publications. Set it explicitly to the same value as
+`client_id` in the tablet's MQTT settings. For example, setting both to
+`kitchen` sends RGB commands to `kitchen/light/switch`,
+`kitchen/brightness/set`, and `kitchen/rgb/set`, and switch commands to
+`kitchen/switch1/set` and `kitchen/switch2/set`.
+
+Do not include a leading or trailing slash. The plugin removes those if
+entered. MQTT wildcards (`+` and `#`) are not valid in this setting.
+
+The plugin log records the topic filters requested by the OEM MQTT client
+and every outbound RGB or switch command. When a firmware publishes status
+without subscribing to command topics, the loopback broker also sends the
+command directly to its connected OEM MQTT client and logs that fallback.
+
+The broker accepts any MQTT client credentials, but its loopback-only bind
+keeps it inaccessible to other devices.
 
 ## Build and test
 
 Requirements:
 
-- JDK 17+
-- Gradle 9+
-- Android SDK with at least one installed platform and build-tools `d8`
-- `ANDROID_HOME` or `ANDROID_SDK_ROOT` pointing at that SDK
+- JDK 17 or newer
+- Gradle 9 or newer
+- Android SDK with an installed platform and build-tools containing `d8`
+- `ANDROID_HOME` or `ANDROID_SDK_ROOT`
 
-Run the targeted unit tests:
-
-```bash
-gradle test
-```
-
-Build the package ZIP and checksum:
+Run:
 
 ```bash
-gradle clean build -PandroidPlatform=35
+gradle clean build
 ```
 
-The build output is written to `dist/`:
+The installable ZIP and SHA-256 checksum are generated in `dist/`.
 
-- `kiosk-satellite-plugin.json`
-- `smt101-sensors-<version>.zip`
-- `smt101-sensors-<version>.zip.sha256`
+## Installation
 
-The ZIP root contains:
-
-- `kiosk-satellite-plugin.json`
-- `plugin.jar` (DEX payload for Kiosk Satellite)
-- `LICENSE`
-- `assets/licenses/THIRD_PARTY_NOTICES.txt`
-
-For release builds, pass `-PpluginVersion=1.2.3` so the packaged manifest and ZIP filename use the release version without editing the source manifest.
-
-## Packaging and installation
-
-1. Build the ZIP locally or let GitHub Actions build it from a release tag.
-2. In Kiosk Satellite, enable **Plugin Manager**.
-3. For developer testing, use **Plugin Manager > Developer Tools > Install from ZIP** and choose the file from `dist/`.
-4. For normal repository installation, publish a stable GitHub release and use the repository URL from Kiosk Satellite's **Add plugin** flow.
-
-## GitHub Actions workflow
-
-`.github/workflows/build.yml` runs the unit tests, builds the package ZIP, uploads the generated artifacts, and attaches the manifest, ZIP, and checksum to published GitHub releases.
-
-## Runtime behavior
-
-- The plugin starts a background `getevent` reader asynchronously.
-- Settings changes stop the current reader and start a fresh one.
-- `host.status(...)` is used for startup, running, and restart/error messages.
-- `host.log(...)` is used for reader diagnostics.
-- `stop()` removes entities and stops the active shell reader process.
-
-## Limitations and future work
-
-- This phase only supports temperature and humidity.
-- It depends on the SMT101-specific `getevent` output format and system properties used by the upstream app.
-- It assumes `getevent` and `getprop` are available on the kiosk device.
-- It does not use vendor JNI libraries or direct Android `SensorManager` integration yet.
-- It does not publish Home Assistant MQTT discovery directly; it relies on Kiosk Satellite's native entity bridge.
-
-## Licensing
-
-This repository is licensed under [Apache-2.0](LICENSE).
-
-Runtime dependency notes are included in [assets/licenses/THIRD_PARTY_NOTICES.txt](assets/licenses/THIRD_PARTY_NOTICES.txt).
+1. Build the plugin or download its ZIP.
+2. Install the ZIP through Kiosk Satellite's Plugin Manager.
+3. Configure the OEM MQTT client to publish to the tablet's embedded broker.
+4. Confirm the plugin log reports an MQTT client connection and captured
+   temperature/humidity publications.

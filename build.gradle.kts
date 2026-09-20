@@ -176,7 +176,9 @@ fun stripDirectoryEntries(zipFile: File) {
             val entries = source.entries()
             while (entries.hasMoreElements()) {
                 val entry = entries.nextElement()
-                if (entry.isDirectory) {
+                // Some ZIP producers do not preserve the directory flag, but a
+                // trailing slash is still an unambiguous directory marker.
+                if (entry.isDirectory || entry.name.endsWith('/')) {
                     continue
                 }
                 require(seen.add(entry.name)) { "Duplicate ZIP entry ${entry.name}." }
