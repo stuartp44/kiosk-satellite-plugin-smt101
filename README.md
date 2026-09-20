@@ -130,14 +130,21 @@ gradle clean build
 
 The installable ZIP and SHA-256 checksum are generated in `dist/`.
 
-## Automated CI package
+## Automated CI and releases
 
 Pushes, pull requests, and manual workflow runs execute the complete build
 and test suite. Each run starts with `clean`, so its `smt101-plugin-dist`
 GitHub Actions artifact contains only the current manifest, installable ZIP,
 and SHA-256 checksum. CI artifacts are retained for 30 days.
 
-The workflow does not create or delete GitHub Releases or Git tags.
+When the manifest version changes on `main`, a separate workflow runs the
+same clean build and tests, verifies the ZIP and checksum, and creates the
+matching stable `v<version>` GitHub Release. After the new release succeeds,
+older version releases and version tags are removed so only the current
+package remains.
+
+The release workflow is triggered by the manifest change, not by a GitHub
+`release` event. Bump the manifest version for every new release.
 
 ## Installation
 

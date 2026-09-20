@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "smt101-sensors",
   "name": "SMT101 Sensors",
-  "version": "0.1.33",
+  "version": "0.1.34",
   "apiVersion": 1,
   "minAndroidSdk": 24,
   "entryClass": "com.stuartp44.smt101.Smt101Plugin",
