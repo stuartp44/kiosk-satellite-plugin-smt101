@@ -143,6 +143,10 @@ matching stable `v<version>` GitHub Release. After the new release succeeds,
 older version releases and version tags are removed so only the current
 package remains.
 
+Each release uploads exactly one standalone `kiosk-satellite-plugin.json`
+asset for Plugin Manager discovery, plus the installable ZIP and its
+SHA-256 checksum.
+
 The release workflow is triggered by the manifest change, not by a GitHub
 `release` event. Bump the manifest version for every new release.
 

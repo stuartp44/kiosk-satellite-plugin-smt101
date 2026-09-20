@@ -77,9 +77,12 @@ jobs:
         run: |
           test -f "dist/$ZIP"
           test -f "dist/$ZIP.sha256"
+          test -f "dist/kiosk-satellite-plugin.json"
           (cd dist && sha256sum --check "$ZIP.sha256")
           packaged_version="$(unzip -p "dist/$ZIP" kiosk-satellite-plugin.json | jq -er '.version')"
           test "$packaged_version" = "$VERSION"
+          release_manifest_version="$(jq -er '.version' dist/kiosk-satellite-plugin.json)"
+          test "$release_manifest_version" = "$VERSION"
 
       - name: Publish GitHub release
         shell: bash
@@ -90,6 +93,7 @@ jobs:
           ZIP: ${{ steps.version.outputs.zip }}
         run: |
           gh release create "$TAG" \
+            "dist/kiosk-satellite-plugin.json" \
             "dist/$ZIP" \
             "dist/$ZIP.sha256" \
             --target "$GITHUB_SHA" \
