@@ -130,6 +130,15 @@ gradle clean build
 
 The installable ZIP and SHA-256 checksum are generated in `dist/`.
 
+## Automated CI package
+
+Pushes, pull requests, and manual workflow runs execute the complete build
+and test suite. Each run starts with `clean`, so its `smt101-plugin-dist`
+GitHub Actions artifact contains only the current manifest, installable ZIP,
+and SHA-256 checksum. CI artifacts are retained for 30 days.
+
+The workflow does not create or delete GitHub Releases or Git tags.
+
 ## Installation
 
 1. Build the plugin or download its ZIP.
