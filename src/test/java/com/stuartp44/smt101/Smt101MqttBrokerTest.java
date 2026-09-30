@@ -267,6 +267,122 @@ class Smt101MqttBrokerTest {
         }
     }
 
+    @Test
+    void reportsDisconnectReasonForCleanAndAbruptDisconnects() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        java.util.concurrent.BlockingQueue<String> disconnects =
+                new java.util.concurrent.LinkedBlockingQueue<String>();
+        AtomicInteger port = new AtomicInteger();
+        Smt101MqttBroker broker = new Smt101MqttBroker(0, new Smt101MqttBroker.Listener() {
+            @Override
+            public void onStarted(int actualPort) {
+                port.set(actualPort);
+                started.countDown();
+            }
+
+            @Override
+            public void onClientConnected(String clientId, int protocolLevel, boolean hasUsername) {
+            }
+
+            @Override
+            public void onClientSubscribed(java.util.List<String> topicFilters) {
+            }
+
+            @Override
+            public void onClientDisconnected(String clientId, String reason, long connectedMillis) {
+                disconnects.add(clientId + ":" + reason);
+            }
+
+            @Override
+            public void onMessage(String topic, String payload) {
+            }
+
+            @Override
+            public void onError(String message) {
+            }
+        });
+        Thread thread = new Thread(() -> {
+            try {
+                broker.run();
+            } catch (Exception ignored) {
+            }
+        });
+        thread.start();
+        assertTrue(started.await(2, TimeUnit.SECONDS));
+        try {
+            try (Socket socket = new Socket("127.0.0.1", port.get())) {
+                DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+                writeConnect(out, "clean-client");
+                readPacket(new DataInputStream(socket.getInputStream()));
+                long deadline = System.currentTimeMillis() + 2000L;
+                while (broker.connectedClientCount() != 1 && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(10L);
+                }
+                assertEquals(1, broker.connectedClientCount());
+                writePacket(out, 0xE0, new byte[0]);
+                assertEquals("clean-client:DISCONNECT received", disconnects.poll(2, TimeUnit.SECONDS));
+            }
+            try (Socket socket = new Socket("127.0.0.1", port.get())) {
+                DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+                writeConnect(out, "abrupt-client");
+                readPacket(new DataInputStream(socket.getInputStream()));
+            }
+            assertEquals("abrupt-client:connection closed by client", disconnects.poll(2, TimeUnit.SECONDS));
+            assertEquals(0, broker.connectedClientCount());
+        } finally {
+            broker.stop();
+            thread.join(2000);
+        }
+    }
+
+    @Test
+    void canRunAgainAfterPortWasBusy() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        java.net.ServerSocket occupant = new java.net.ServerSocket();
+        occupant.bind(new java.net.InetSocketAddress(java.net.InetAddress.getByName("127.0.0.1"), 0));
+        int busyPort = occupant.getLocalPort();
+        Smt101MqttBroker broker = new Smt101MqttBroker(busyPort, new Smt101MqttBroker.Listener() {
+            @Override
+            public void onStarted(int actualPort) {
+                started.countDown();
+            }
+
+            @Override
+            public void onClientConnected(String clientId, int protocolLevel, boolean hasUsername) {
+            }
+
+            @Override
+            public void onClientSubscribed(java.util.List<String> topicFilters) {
+            }
+
+            @Override
+            public void onMessage(String topic, String payload) {
+            }
+
+            @Override
+            public void onError(String message) {
+            }
+        });
+        try {
+            org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class, broker::run);
+        } finally {
+            occupant.close();
+        }
+        Thread thread = new Thread(() -> {
+            try {
+                broker.run();
+            } catch (Exception ignored) {
+            }
+        });
+        thread.start();
+        try {
+            assertTrue(started.await(2, TimeUnit.SECONDS));
+        } finally {
+            broker.stop();
+            thread.join(2000);
+        }
+    }
+
     private static void writeConnect(DataOutputStream out, String clientId) throws Exception {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         writeUtf8(body, "MQTT");

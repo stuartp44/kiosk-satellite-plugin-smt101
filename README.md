@@ -113,6 +113,40 @@ command directly to its connected OEM MQTT client and logs that fallback.
 The broker accepts any MQTT client credentials, but its loopback-only bind
 keeps it inaccessible to other devices.
 
+### Entity state refresh and diagnostics
+
+Every 60 seconds the plugin re-sends the last received temperature,
+humidity, door, and switch states to Kiosk Satellite. A reading that was
+dropped by the host therefore recovers without waiting for the OEM value to
+change. The cache is reset, and the entities return to `Unknown`, when the
+plugin starts or its settings change.
+
+Temperature and humidity readings older than 30 minutes are not re-sent;
+they are set to `Unknown` and the log records
+`No sensor.<name> reading received for 30 minutes`. Door and switch states
+may only be published by the OEM client when they change, so they do not
+expire. If no MQTT publication of any kind arrives for 10 minutes, the plugin
+logs and shows a status warning with the number of open OEM MQTT client
+connections. It reports `MQTT publications resumed.` when publications
+arrive again.
+
+Every OEM MQTT client disconnect is logged with its client ID, reason (for
+example `DISCONNECT received`, `connection closed by client`, or
+`Read timed out`), and connection duration. If the broker stops listening,
+for example because port 1883 is still held, it retries after 5, 10, and
+then every 30 seconds, and shows a status until it recovers.
+
+If Kiosk Satellite rejects an entity update, the plugin logs
+`Kiosk rejected <entity> update ...` at most once per minute per entity and
+writes the same line to logcat via `System.err`. When updates are accepted
+again, it logs `Kiosk accepted <entity> updates again.` If the rejection
+means Kiosk has ended the plugin session, the plugin logs
+`Kiosk ended this plugin session` and stops its broker so the next session
+can bind port 1883.
+
+Switch and RGB backlight commands are sent from a dedicated plugin thread,
+so a stalled MQTT write cannot trip Kiosk's plugin callback timeout.
+
 ## Build and test
 
 Requirements:
