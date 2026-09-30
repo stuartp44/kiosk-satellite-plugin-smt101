@@ -50,6 +50,9 @@ final class Smt101MqttBroker {
 
         void onClientSubscribed(List<String> topicFilters);
 
+        default void onClientDisconnected(String clientId, String reason, long connectedMillis) {
+        }
+
         void onMessage(String topic, String payload);
 
         void onError(String message);
@@ -96,7 +99,14 @@ final class Smt101MqttBroker {
                             handleClient(acceptedClient);
                         } catch (IOException exception) {
                             if (!stopped) {
-                                notifyError("client disconnected: " + summarize(exception));
+                                notifyError("client connection rejected before CONNECT completed: "
+                                        + summarize(exception));
+                            }
+                        } catch (Throwable throwable) {
+                            // An escaped throwable would end this thread silently or crash the host app.
+                            if (!stopped) {
+                                notifyError("client handler failed: " + throwable.getClass().getSimpleName()
+                                        + ": " + summarize(throwable));
                             }
                         } finally {
                             closeQuietly(acceptedClient);
@@ -144,6 +154,8 @@ final class Smt101MqttBroker {
         }
         ClientConnection connection = new ClientConnection(client, out, info.protocolLevel);
         clients.add(connection);
+        long connectedAt = System.currentTimeMillis();
+        String reason = "broker stopped";
         if (listener != null) {
             listener.onClientConnected(info.clientId, info.protocolLevel, info.hasUsername);
         }
@@ -152,6 +164,7 @@ final class Smt101MqttBroker {
             while (!stopped) {
                 Packet packet = readPacket(in);
                 if (packet == null) {
+                    reason = "connection closed by client";
                     return;
                 }
                 switch (packetType(packet.header)) {
@@ -180,14 +193,30 @@ final class Smt101MqttBroker {
                         }
                         break;
                     case 14:
+                        reason = "DISCONNECT received";
                         return;
                     default:
                         break;
                 }
             }
+        } catch (IOException exception) {
+            if (!stopped) {
+                reason = summarize(exception);
+            }
+        } catch (RuntimeException exception) {
+            reason = "unexpected " + exception.getClass().getSimpleName() + ": " + summarize(exception);
+            throw exception;
         } finally {
             clients.remove(connection);
+            if (listener != null) {
+                listener.onClientDisconnected(
+                        info.clientId, reason, System.currentTimeMillis() - connectedAt);
+            }
         }
+    }
+
+    int connectedClientCount() {
+        return clients.size();
     }
 
     PublishResult publish(String topic, String payload) {
