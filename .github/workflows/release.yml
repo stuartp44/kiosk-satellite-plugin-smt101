@@ -4,12 +4,12 @@ on:
   push:
     branches:
       - main
-    paths:
-      - kiosk-satellite-plugin.json
   workflow_dispatch:
 
 permissions:
   contents: write
+  issues: write
+  pull-requests: write
 
 concurrency:
   group: plugin-release
@@ -18,11 +18,19 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-24.04
+    # Skip the version-bump commit that semantic-release pushes back to main.
+    if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
     steps:
       - name: Check out source and tags
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
 
       - name: Set up Java
         uses: actions/setup-java@v6
@@ -34,29 +42,6 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      - name: Read and validate manifest version
-        id: version
-        shell: bash
-        run: |
-          version="$(jq -er '.version' kiosk-satellite-plugin.json)"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; then
-            echo "::error::Invalid plugin version: $version"
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
-          echo "zip=smt101-sensors-$version.zip" >> "$GITHUB_OUTPUT"
-
-      - name: Require a new version
-        shell: bash
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          if git rev-parse --verify --quiet "refs/tags/$TAG" >/dev/null; then
-            echo "::error::$TAG already exists. Bump the manifest version before publishing."
-            exit 1
-          fi
-
       - name: Verify Android SDK
         shell: bash
         run: |
@@ -65,46 +50,21 @@ jobs:
           test -f "$sdk_root/platforms/android-35/android.jar"
           find "$sdk_root/build-tools" -type f -name d8 -perm -111 -print -quit | grep -q .
 
-      - name: Test and build package
-        shell: bash
-        run: gradle --no-daemon clean build -PandroidPlatform=35
+      - name: Install release tooling
+        run: npm ci
 
-      - name: Verify package
-        shell: bash
+      - name: Run semantic-release
+        id: release
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-          ZIP: ${{ steps.version.outputs.zip }}
-        run: |
-          test -f "dist/$ZIP"
-          test -f "dist/$ZIP.sha256"
-          test -f "dist/kiosk-satellite-plugin.json"
-          (cd dist && sha256sum --check "$ZIP.sha256")
-          packaged_version="$(unzip -p "dist/$ZIP" kiosk-satellite-plugin.json | jq -er '.version')"
-          test "$packaged_version" = "$VERSION"
-          release_manifest_version="$(jq -er '.version' dist/kiosk-satellite-plugin.json)"
-          test "$release_manifest_version" = "$VERSION"
-
-      - name: Publish GitHub release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-          VERSION: ${{ steps.version.outputs.version }}
-          ZIP: ${{ steps.version.outputs.zip }}
-        run: |
-          gh release create "$TAG" \
-            "dist/kiosk-satellite-plugin.json" \
-            "dist/$ZIP" \
-            "dist/$ZIP.sha256" \
-            --target "$GITHUB_SHA" \
-            --title "SMT101 Sensors v$VERSION" \
-            --generate-notes
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npx semantic-release
 
       - name: Remove superseded version releases and tags
+        if: steps.release.outputs.version != ''
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          CURRENT_TAG: ${{ steps.version.outputs.tag }}
+          CURRENT_TAG: v${{ steps.release.outputs.version }}
         run: |
           while IFS= read -r old_tag; do
             if [[ -n "$old_tag" && "$old_tag" != "$CURRENT_TAG" ]]; then

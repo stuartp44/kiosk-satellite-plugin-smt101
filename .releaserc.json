@@ -1,0 +1,36 @@
+{
+  "branches": ["main"],
+  "tagFormat": "v${version}",
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    "@semantic-release/release-notes-generator",
+    [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "scripts/prepare-release.sh ${nextRelease.version}",
+        "successCmd": "echo \"version=${nextRelease.version}\" >> \"$GITHUB_OUTPUT\""
+      }
+    ],
+    [
+      "@semantic-release/git",
+      {
+        "assets": ["kiosk-satellite-plugin.json"],
+        "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+      }
+    ],
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          { "path": "dist/kiosk-satellite-plugin.json", "label": "kiosk-satellite-plugin.json" },
+          { "path": "dist/smt101-sensors-*.zip" },
+          { "path": "dist/smt101-sensors-*.zip.sha256" }
+        ],
+        "releaseNameTemplate": "SMT101 Sensors v${nextRelease.version}",
+        "successComment": false,
+        "failComment": false,
+        "releasedLabels": false
+      }
+    ]
+  ]
+}

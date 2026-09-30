@@ -171,18 +171,34 @@ and test suite. Each run starts with `clean`, so its `smt101-plugin-dist`
 GitHub Actions artifact contains only the current manifest, installable ZIP,
 and SHA-256 checksum. CI artifacts are retained for 30 days.
 
-When the manifest version changes on `main`, a separate workflow runs the
-same clean build and tests, verifies the ZIP and checksum, and creates the
-matching stable `v<version>` GitHub Release. After the new release succeeds,
-older version releases and version tags are removed so only the current
-package remains.
+Releases are fully automated with
+[semantic-release](https://semantic-release.org). Every push to `main` runs
+`.github/workflows/release.yml`, which reads the
+[Conventional Commits](https://www.conventionalcommits.org) since the last
+`v<version>` tag and decides the next version:
+
+| Commit message                                   | Release         |
+| ------------------------------------------------ | --------------- |
+| `fix: ...`, `perf: ...`                          | patch (0.1.x)   |
+| `feat: ...`                                      | minor (0.x.0)   |
+| `feat!: ...` or a `BREAKING CHANGE:` footer      | major (x.0.0)   |
+| `chore:`, `ci:`, `docs:`, `test:`, other text    | no release      |
+
+When a release is due, `scripts/prepare-release.sh` writes the new version
+into `kiosk-satellite-plugin.json`, runs the same clean build and tests, and
+verifies the ZIP and checksum. semantic-release then commits the manifest back
+to `main` as `chore(release): <version> [skip ci]`, tags `v<version>`, and
+creates the GitHub Release with generated notes. After the new release
+succeeds, older version releases and version tags are removed so only the
+current package remains.
 
 Each release uploads exactly one standalone `kiosk-satellite-plugin.json`
 asset for Plugin Manager discovery, plus the installable ZIP and its
 SHA-256 checksum.
 
-The release workflow is triggered by the manifest change, not by a GitHub
-`release` event. Bump the manifest version for every new release.
+Do not bump the manifest version by hand. When squash-merging pull requests,
+use a Conventional Commit PR title (for example `fix: resend last MQTT values`),
+because that title becomes the commit semantic-release analyzes.
 
 ## Installation
 

@@ -1,0 +1,14 @@
+{
+  "name": "kiosk-satellite-plugin-smt101-release",
+  "private": true,
+  "description": "Release tooling only; the plugin itself is built with Gradle.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "release": "semantic-release"
+  },
+  "devDependencies": {
+    "@semantic-release/exec": "^7.1.0",
+    "@semantic-release/git": "^11.0.1",
+    "semantic-release": "^25.0.9"
+  }
+}
