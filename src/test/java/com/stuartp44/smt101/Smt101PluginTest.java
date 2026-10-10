@@ -44,6 +44,41 @@ class Smt101PluginTest {
     }
 
     @Test
+    void externalModeRunsRecoveryWithoutLocalBrokerOrLocalSilenceWarning() throws Exception {
+        plugin.stop();
+        CountDownLatch checked = new CountDownLatch(1);
+        Smt101MqttRecovery recovery = new Smt101MqttRecovery(new Smt101MqttRecovery.Backend() {
+            @Override
+            public void check(boolean reenableDisabledMqtt, Smt101MqttRecovery.Callback callback) {
+                assertTrue(reenableDisabledMqtt);
+                callback.complete(Smt101MqttRecovery.Result.RESTARTED, null);
+                checked.countDown();
+            }
+
+            @Override
+            public void stop() {
+            }
+        });
+        plugin = new Smt101Plugin(() -> now.get(), recovery);
+        Map<String, Object> settings = new LinkedHashMap<String, Object>();
+        settings.put("enableEmbeddedMqttBroker", Boolean.FALSE);
+        settings.put("enableAutomaticMqttRecovery", Boolean.TRUE);
+        settings.put("reenableDisabledMqtt", Boolean.TRUE);
+        plugin.start(host, settings);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (checked.getCount() != 0 && System.nanoTime() < deadline) {
+            plugin.refreshEntityStates();
+            checked.await(10, TimeUnit.MILLISECONDS);
+        }
+        assertEquals(0L, checked.getCount());
+        assertTrue(host.lastStatus.contains("external broker delivery is not monitored"));
+        now.addAndGet(Smt101Plugin.MQTT_SILENCE_WARNING_MS);
+        plugin.refreshEntityStates();
+        assertTrue(host.logsContaining("No MQTT publications received").isEmpty());
+        assertTrue(host.logsContaining("capture broker listening").isEmpty());
+    }
+
+    @Test
     void republishesLastKnownReadings() {
         plugin.handleMqttMessage("office/sensors/temperature", "{\"temperature\":26.4}");
         plugin.handleMqttMessage("office/sensors/humidity", "{\"humidity\":38.5}");
