@@ -29,7 +29,7 @@ final class Smt101OemRecovery implements Smt101MqttRecovery.Backend {
     private volatile boolean stopped;
 
     @Override
-    public void check(final Smt101MqttRecovery.Callback callback) {
+    public void check(final boolean reenableDisabledMqtt, final Smt101MqttRecovery.Callback callback) {
         if (stopped || !busy.compareAndSet(false, true)) {
             throw new IllegalStateException("OEM recovery worker is stopped or still completing a previous check");
         }
@@ -44,7 +44,7 @@ final class Smt101OemRecovery implements Smt101MqttRecovery.Backend {
                 Smt101MqttRecovery.Result result = null;
                 String error = null;
                 try {
-                    result = recover(completed);
+                    result = recover(completed, reenableDisabledMqtt);
                 } catch (Exception exception) {
                     if (exception instanceof InterruptedException) {
                         Thread.currentThread().interrupt();
@@ -66,19 +66,16 @@ final class Smt101OemRecovery implements Smt101MqttRecovery.Backend {
         }
     }
 
-    private Smt101MqttRecovery.Result recover(AtomicBoolean completed) throws Exception {
+    private Smt101MqttRecovery.Result recover(AtomicBoolean completed, boolean reenableDisabledMqtt) throws Exception {
         if (!FIRMWARE.equals(property("ro.build.display.id"))) {
             throw new IOException("Unsupported firmware for OEM MQTT recovery");
         }
-        if (!mqttEnabled()) {
-            return Smt101MqttRecovery.Result.DISABLED;
-        }
+        boolean enabled = mqttEnabled();
         String state = property("init.svc.iot_mqtt_client");
-        if ("running".equals(state)) {
-            return Smt101MqttRecovery.Result.RUNNING;
-        }
-        if (!"stopped".equals(state)) {
-            throw new IOException("Unexpected OEM MQTT service state: " + state);
+        Smt101MqttRecovery.Result unchanged =
+                Smt101MqttRecovery.unchangedState(enabled, state, reenableDisabledMqtt);
+        if (unchanged != null) {
+            return unchanged;
         }
         // SDK 1 has no Context accessor. This lookup was verified in a target-SDK-36 normal app.
         Object application = Class.forName("android.app.ActivityThread")
@@ -123,15 +120,14 @@ final class Smt101OemRecovery implements Smt101MqttRecovery.Backend {
             if (!DESCRIPTOR.equals(service[0].getInterfaceDescriptor())) {
                 throw new IOException("Unexpected OEM Binder interface");
             }
-            // Recheck after binding so a user disabling MQTT or another recovery is respected.
-            if (!mqttEnabled()) {
-                return Smt101MqttRecovery.Result.DISABLED;
-            }
+            // Recheck after binding and only override a disable when explicitly configured.
+            enabled = mqttEnabled();
             state = property("init.svc.iot_mqtt_client");
-            if ("running".equals(state)) {
-                return Smt101MqttRecovery.Result.RUNNING;
+            unchanged = Smt101MqttRecovery.unchangedState(enabled, state, reenableDisabledMqtt);
+            if (unchanged != null) {
+                return unchanged;
             }
-            if (!"stopped".equals(state) || stopped || completed.get()) {
+            if (stopped || completed.get()) {
                 throw new IOException("OEM recovery cancelled or service state changed: " + state);
             }
             Parcel request = Parcel.obtain();
@@ -152,10 +148,10 @@ final class Smt101OemRecovery implements Smt101MqttRecovery.Backend {
                 response.recycle();
             }
             Thread.sleep(2_000L);
-            if (!"running".equals(property("init.svc.iot_mqtt_client"))) {
-                throw new IOException("OEM publisher did not stay running after start");
+            if (!mqttEnabled() || !"running".equals(property("init.svc.iot_mqtt_client"))) {
+                throw new IOException("OEM publisher did not stay enabled and running after start");
             }
-            return Smt101MqttRecovery.Result.RESTARTED;
+            return enabled ? Smt101MqttRecovery.Result.RESTARTED : Smt101MqttRecovery.Result.REENABLED;
         } finally {
             context.unbindService(connection);
         }

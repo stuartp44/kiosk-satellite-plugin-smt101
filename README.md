@@ -1,4 +1,4 @@
-# SMT101 Sensors for Kiosk Satellite
+# SMT101x Sensors for Kiosk Satellite
 
 This SDK 1 Kiosk Satellite plugin exposes the tablet's temperature,
 humidity, switch/door inputs, and RGB backlight as Kiosk Satellite entities.
@@ -24,7 +24,7 @@ topics, payloads, or hardware interfaces and are not currently confirmed.
 | Door 1 / Door 2 | OEM MQTT status publications | Binary sensors with the `door` device class |
 | RGB Backlight | OEM MQTT command and state topics | On/off, brightness, and RGB color |
 
-The plugin does not require Shizuku or root and does not inspect `/dev/input`.
+The plugin does not inspect `/dev/input`.
 Optional automatic recovery uses the tablet's exported
 `com.broadcastinterface.ApiSystemService` to start a stopped OEM publisher.
 
@@ -34,7 +34,78 @@ Optional automatic recovery uses the tablet's exported
 | --- | --- | --- | --- |
 | `enableEmbeddedMqttBroker` | boolean | `true` | Hosts the MQTT capture broker used to receive OEM sensor publications. |
 | `mqttClientId` | string | blank | Must match `client_id` in the tablet's MQTT settings, such as `office`. Blank enables automatic discovery. |
-| `enableAutomaticMqttRecovery` | boolean | `false` | Opt-in recovery of the stopped OEM MQTT publisher through the OEM system service, without Shizuku or root. |
+| `enableAutomaticMqttRecovery` | boolean | `false` | Opt-in recovery of the stopped OEM MQTT publisher through the OEM system service. |
+| `reenableDisabledMqtt` | boolean | `false` | Allows enabled recovery to override the tablet's MQTT disable setting in either mode. |
+
+## Operating modes
+
+### External MQTT recovery
+
+Turn **Host MQTT capture broker on this tablet** off and enable
+**Automatically recover stopped OEM MQTT publisher**. Keep the server
+address, port, credentials, and client ID already configured in
+**Android Settings > System > MQTT**.
+
+The plugin checks the OEM process once per minute and starts it if stopped.
+This can recover crashes triggered by Wi-Fi interruptions or updates that
+stop the publisher, once the configured server is reachable again.
+It does not restart a running but disconnected process, confirm external
+broker delivery, or repair Wi-Fi, authentication, or server failures.
+The OEM client remains responsible for its own reconnect behavior.
+External readings and commands continue through your existing MQTT setup;
+they are not bridged into Kiosk Satellite by this plugin in this mode.
+
+### Local sensor management through Kiosk Satellite
+
+Turn **Host MQTT capture broker on this tablet** on and configure the tablet's
+MQTT server as `127.0.0.1`, port `1883`. The plugin receives sensor and door
+readings and exposes switch and RGB controls through Kiosk Satellite.
+No separate MQTT server is required: MQTT still runs internally between
+the OEM publisher and the plugin's built-in loopback broker.
+Enable automatic recovery to restart a stopped publisher in this mode too.
+
+#### Tablet MQTT settings
+
+Open **Android Settings > System > MQTT**. On the confirmed firmware,
+tapping the MQTT row while enabled turns the publisher off; tapping it
+again opens the **Set Mqtt** configuration dialog. This briefly interrupts
+sensor publications. If automatic re-enabling is enabled, turn that plugin
+option off temporarily so recovery does not interfere with configuration.
+
+Use these values for the built-in local broker:
+
+| Field | Value |
+| --- | --- |
+| host | `127.0.0.1` |
+| port | `1883` |
+| username | Leave blank |
+| password | Leave blank |
+| client_id | `office` in this example; keep your tablet's client ID |
+| keepalive | `30` |
+
+![Local MQTT configuration dialog captured from the SMT101x tablet](docs/images/local-mqtt-settings.png)
+
+Tap **OK** to save and enable the OEM MQTT publisher. Ensure the MQTT switch
+is on when finished. The switch indicates that MQTT is enabled, not that
+sensor publications are reaching the plugin.
+
+#### Plugin settings
+
+| Setting | Local-mode value |
+| --- | --- |
+| **Host MQTT capture broker on this tablet** | **On** |
+| `mqttClientId` | Leave blank for automatic discovery, or match the tablet's `client_id` |
+| **Automatically recover stopped OEM MQTT publisher** | **On** for unattended recovery |
+| **Automatically re-enable disabled tablet MQTT** | Optional: **On** if recovery should also turn the Android MQTT switch back on |
+
+Restore automatic re-enabling after configuration if you want that behavior.
+Leave it off to respect intentional MQTT disables. Confirm that real sensor
+readings appear in Kiosk Satellite after saving the tablet settings.
+
+Changing modes does not rewrite the tablet's MQTT connection settings.
+Configure the correct server address in Android settings when switching.
+Optional automatic re-enabling works in either mode and only changes the
+MQTT enable switch, not the configured connection.
 
 ### Automatic OEM publisher recovery
 
@@ -44,22 +115,39 @@ when `persist.start.mqtt` remains `1`. This leaves sensors `Unknown` while
 the plugin's broker is still listening.
 
 To enable recovery, enable **Automatically recover stopped OEM MQTT
-publisher** in the plugin page. No Shizuku startup, permission prompt, root,
-or external computer is required. Capture continues to work with recovery
+publisher** in the plugin page. Capture continues to work with recovery
 disabled. After reboot, recovery resumes when Kiosk Satellite starts the
 enabled plugin; ensure Kiosk Satellite is configured to launch on boot.
 
-While the embedded broker is listening, the plugin checks the service once
-per minute. On the confirmed firmware only, when tablet MQTT is enabled
+The plugin checks the service once per minute. Local mode waits until the
+embedded broker is listening; external mode does not start a local broker.
+On the confirmed firmware only, when tablet MQTT is enabled
 (`persist.start.mqtt=1`) and the service is `stopped`, it reapplies
 the MQTT start property through the OEM Binder service's
 `setSystemProperties` operation. Android init starts the OEM service with its
 normal identity; the plugin does not launch a daemon itself.
 It verifies that the service is running after two seconds and logs that it
-is waiting for publications. Actual sensor readings still come exclusively
+is waiting for publications in local mode. In external mode it reports only
+that the publisher is running; external broker delivery is not monitored.
+Actual sensor readings still come exclusively
 from MQTT, not from the restart result.
+Once a real MQTT publication arrives, the recovery status changes to
+`MQTT publications are being received`. Publications arriving before the
+restart confirmation are also recognized, so the confirmation cannot
+overwrite active reception with a stale waiting message.
 
-Running services and disabled tablet MQTT are left unchanged. Restart attempts
+Running services and disabled tablet MQTT are left unchanged by default.
+Enable **Automatically re-enable disabled tablet MQTT** to explicitly allow
+recovery to change `persist.start.mqtt` from `0` to `1`. This option only
+applies while automatic recovery is enabled, in either mode.
+It overrides intentional tablet MQTT disables, but does not change the MQTT
+broker address, port, credentials, or client ID. Successful re-enabling is
+logged separately and verified by checking both the enable property and the
+running service; sensor readings still require actual MQTT publications.
+Re-enabling uses the same five-minute cooldown as restarting.
+Turn this option off before intentionally disabling tablet MQTT.
+
+Restart attempts
 and failed checks are limited to once every five minutes. Rejected service
 bindings, unexpected service states, unsupported firmware, timeouts, and
 transaction failures are reported in the plugin status and log. Disabling

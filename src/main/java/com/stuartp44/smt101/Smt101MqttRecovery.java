@@ -6,7 +6,7 @@ final class Smt101MqttRecovery {
     static final long RETRY_INTERVAL_MS = 5L * 60_000L;
 
     enum Result {
-        RUNNING, DISABLED, RESTARTED
+        RUNNING, DISABLED, RESTARTED, REENABLED
     }
 
     interface Callback {
@@ -14,16 +14,20 @@ final class Smt101MqttRecovery {
     }
 
     interface Backend {
-        void check(Callback callback);
+        void check(boolean reenableDisabledMqtt, Callback callback);
         void stop();
     }
 
     private Backend backend;
     private boolean enabled;
+    private boolean reenableDisabledMqtt;
     private boolean pending;
     private long generation;
     private long nextCheckMs;
     private String lastProblem;
+    private long publicationCount;
+    private boolean waitingForPublications;
+    private boolean localMqttMode;
 
     Smt101MqttRecovery() {
     }
@@ -33,10 +37,21 @@ final class Smt101MqttRecovery {
     }
 
     synchronized void configure(boolean enabled) {
+        configure(enabled, false);
+    }
+
+    synchronized void configure(boolean enabled, boolean reenableDisabledMqtt) {
+        configure(enabled, reenableDisabledMqtt, true);
+    }
+
+    synchronized void configure(boolean enabled, boolean reenableDisabledMqtt, boolean localMqttMode) {
         this.enabled = enabled;
+        this.reenableDisabledMqtt = enabled && reenableDisabledMqtt;
+        this.localMqttMode = localMqttMode;
         generation++;
         nextCheckMs = 0L;
         lastProblem = null;
+        waitingForPublications = false;
     }
 
     synchronized void stop() {
@@ -51,15 +66,17 @@ final class Smt101MqttRecovery {
             return;
         }
         final long requestGeneration = generation;
+        final long publicationsAtRequest = publicationCount;
         try {
             if (backend == null) {
                 backend = new Smt101OemRecovery();
             }
             pending = true;
-            backend.check(new Callback() {
+            backend.check(reenableDisabledMqtt, new Callback() {
                 @Override
                 public void complete(Result result, String error) {
-                    Smt101MqttRecovery.this.complete(host, now, requestGeneration, result, error);
+                    Smt101MqttRecovery.this.complete(host, now, requestGeneration,
+                            publicationsAtRequest, result, error);
                 }
             });
         } catch (RuntimeException exception) {
@@ -70,7 +87,7 @@ final class Smt101MqttRecovery {
     }
 
     private synchronized void complete(PluginHost host, long now, long requestGeneration,
-            Result result, String error) {
+            long publicationsAtRequest, Result result, String error) {
         pending = false;
         if (!enabled || requestGeneration != generation) {
             return;
@@ -81,8 +98,14 @@ final class Smt101MqttRecovery {
                     + (error == null ? "missing OEM service result" : error));
             return;
         }
-        if (result == Result.RESTARTED) {
-            report(host, "Automatic MQTT recovery started the stopped OEM publisher through the OEM service; waiting for MQTT publications.", false);
+        if (result == Result.REENABLED || result == Result.RESTARTED) {
+            waitingForPublications = localMqttMode && publicationCount == publicationsAtRequest;
+            String action = result == Result.REENABLED
+                    ? "re-enabled disabled tablet MQTT" : "started the stopped OEM publisher";
+            report(host, "Automatic MQTT recovery " + action + " through the OEM service; "
+                    + (!localMqttMode ? "publisher is running with the tablet's configured MQTT connection settings; external broker delivery is not monitored."
+                            : waitingForPublications ? "waiting for MQTT publications."
+                            : "MQTT publications are being received."), false);
         } else {
             nextCheckMs = now + 60_000L;
             if (lastProblem != null) {
@@ -90,6 +113,29 @@ final class Smt101MqttRecovery {
             }
         }
         lastProblem = null;
+    }
+
+    synchronized void onPublication(PluginHost host) {
+        publicationCount++;
+        if (enabled && waitingForPublications) {
+            waitingForPublications = false;
+            report(host, "Automatic MQTT recovery completed; MQTT publications are being received.", false);
+        }
+    }
+
+    static Result unchangedState(boolean mqttEnabled, String state, boolean reenableDisabledMqtt) {
+        if (!mqttEnabled && !reenableDisabledMqtt) {
+            return Result.DISABLED;
+        }
+
+        if (!"running".equals(state) && !"stopped".equals(state)) {
+            throw new IllegalStateException("Unexpected OEM MQTT service state: " + state);
+        }
+        return mqttEnabled && "running".equals(state) ? Result.RUNNING : null;
+    }
+
+    static boolean canCheck(boolean localMqttMode, boolean brokerListening) {
+        return !localMqttMode || brokerListening;
     }
 
     private void problem(PluginHost host, String message) {

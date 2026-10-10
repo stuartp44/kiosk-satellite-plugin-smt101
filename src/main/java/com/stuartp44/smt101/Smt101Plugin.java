@@ -49,7 +49,8 @@ public final class Smt101Plugin implements KioskPlugin {
     private final ExecutorService commandExecutor =
             Executors.newSingleThreadExecutor(new PluginThreadFactory("smt101-commands"));
     private final Clock clock;
-    private final Smt101MqttRecovery mqttRecovery = new Smt101MqttRecovery();
+    private final Smt101MqttRecovery mqttRecovery;
+    private volatile boolean localMqttMode;
     private final Object stateLock = new Object();
 
     private volatile PluginHost host;
@@ -77,7 +78,12 @@ public final class Smt101Plugin implements KioskPlugin {
     }
 
     Smt101Plugin(Clock clock) {
+        this(clock, new Smt101MqttRecovery());
+    }
+
+    Smt101Plugin(Clock clock, Smt101MqttRecovery mqttRecovery) {
         this.clock = clock;
+        this.mqttRecovery = mqttRecovery;
     }
 
     @Override
@@ -236,8 +242,9 @@ public final class Smt101Plugin implements KioskPlugin {
         if (!running) {
             return;
         }
-        mqttRecovery.configure(resolvedConfig.isEmbeddedMqttBrokerEnabled()
-                && resolvedConfig.isAutomaticMqttRecoveryEnabled());
+        localMqttMode = resolvedConfig.isEmbeddedMqttBrokerEnabled();
+        mqttRecovery.configure(resolvedConfig.isAutomaticMqttRecoveryEnabled(),
+                resolvedConfig.isReenableMqttEnabled(), localMqttMode);
         configuredTopicPrefix = resolvedConfig.getMqttTopicPrefix();
         rgbTopicPrefix = configuredTopicPrefix;
         switch1TopicPrefix = configuredTopicPrefix;
@@ -367,6 +374,7 @@ public final class Smt101Plugin implements KioskPlugin {
     private void handleMqttMessageLocked(String topic, String payload) {
         long now = clock.nowMillis();
         lastMqttActivityMs = now;
+        mqttRecovery.onPublication(host);
         if (mqttSilenceReported) {
             mqttSilenceReported = false;
             safeLog("MQTT publications resumed.");
@@ -437,7 +445,8 @@ public final class Smt101Plugin implements KioskPlugin {
         }
         long now = clock.nowMillis();
         Smt101MqttBroker broker = mqttBroker;
-        if (broker != null && broker.getBoundAddress() != null) {
+        if (Smt101MqttRecovery.canCheck(localMqttMode,
+                broker != null && broker.getBoundAddress() != null)) {
             mqttRecovery.check(host, now);
         }
         checkMqttSilence(now);
