@@ -136,6 +136,18 @@ fun minAndroidSdk(): Int = when (val value = readManifest()["minAndroidSdk"]) {
 
 fun builtManifestText(): String {
     val manifest = readManifest()
+    require((manifest["description"] as? String)?.length in 1..1000) {
+        "Manifest description must contain 1 to 1000 characters."
+    }
+    val settings = manifest["settings"] as? List<*> ?: error("Manifest settings must be an array.")
+    for (entry in settings) {
+        val setting = entry as? Map<*, *> ?: error("Each manifest setting must be an object.")
+        if (setting.containsKey("description")) {
+            require((setting["description"] as? String)?.length in 1..400) {
+                "Setting '${setting["key"]}' description must contain 1 to 400 characters."
+            }
+        }
+    }
     manifest["version"] = packageVersion()
     return JsonOutput.prettyPrint(JsonOutput.toJson(manifest)) + "\n"
 }
