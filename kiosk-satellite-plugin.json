@@ -19,7 +19,7 @@
       "title": "Automatically re-enable disabled tablet MQTT",
       "default": false,
       "group": "Embedded MQTT broker",
-      "description": "In either mode, allows automatic recovery to turn Android Settings > System > MQTT back on and start the OEM publisher when MQTT is disabled. Requires automatic recovery to be enabled. Checks once per minute, with a five-minute cooldown after recovery attempts; local mode also waits for the built-in broker to be listening. Reopen Android System settings to see the updated switch; enabled does not guarantee a healthy connection. Leave off to respect intentional MQTT disables. The server address, port, credentials, and client ID are not changed."
+      "description": "With automatic recovery enabled, turns Android Settings > System > MQTT back on in either mode. Checks every minute, with a five-minute recovery cooldown; local mode waits for the broker. Reopen System settings to see the switch. Enabled does not guarantee delivery. Leave off to respect intentional disables. Server address, port, credentials, and client ID stay unchanged."
     },
     {
       "key": "enableAutomaticMqttRecovery",
@@ -27,7 +27,7 @@
       "title": "Automatically recover stopped OEM MQTT publisher",
       "default": false,
       "group": "Embedded MQTT broker",
-      "description": "Works with either your existing external MQTT server or the built-in local broker. Checks the OEM publisher once per minute and restarts it if stopped, including after Wi-Fi interruptions or updates that stop the process. Local mode waits for the broker to be listening. Does not restart a running but disconnected client, verify external delivery, or repair network, authentication, or server problems. Disabled MQTT is respected unless automatic re-enabling is selected. Recovery attempts have a five-minute cooldown; connection settings are unchanged."
+      "description": "In either mode, checks every minute and restarts a stopped OEM publisher, with a five-minute recovery cooldown. Local mode waits for the broker. Does not repair a running but disconnected client or network/server failures, or verify external delivery. Disabled MQTT is respected unless automatic re-enabling is selected. Connection settings stay unchanged. See README for details."
     },
     {
       "key": "enableEmbeddedMqttBroker",
@@ -35,7 +35,7 @@
       "title": "Host MQTT capture broker on this tablet",
       "default": true,
       "group": "Embedded MQTT broker",
-      "description": "On: local sensor management through Kiosk Satellite. Set Android Settings > System > MQTT to server 127.0.0.1 and port 1883; the built-in broker receives readings and sends switch and RGB commands, so no separate MQTT server is needed. Off: external MQTT recovery mode; keep your existing tablet MQTT settings and enable automatic recovery. External readings and controls are not bridged into Kiosk Satellite. This setting does not change the tablet's MQTT address automatically; the local broker accepts only connections from this tablet."
+      "description": "On: sensors and controls through Kiosk Satellite, with no separate MQTT server. Set tablet MQTT to 127.0.0.1:1883; only local connections are accepted. Off: external MQTT recovery mode; keep your existing server settings and enable automatic recovery. External readings and controls are not bridged into Kiosk Satellite. This setting does not change the tablet's MQTT address."
     },
     {
       "key": "mqttClientId",
