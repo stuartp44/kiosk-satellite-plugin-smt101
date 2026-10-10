@@ -15,8 +15,18 @@ class Smt101ConfigTest {
         Smt101Config config = Smt101Config.fromSettings(null);
         Smt101ResolvedConfig resolved = config.resolve();
         assertTrue(resolved.isEmbeddedMqttBrokerEnabled());
+        assertFalse(resolved.isAutomaticMqttRecoveryEnabled());
         assertNull(resolved.getMqttTopicPrefix());
         assertTrue(resolved.isMqttTopicPrefixValid());
+    }
+
+    @Test
+    void automaticRecoveryIsOptIn() {
+        Map<String, Object> settings = new LinkedHashMap<String, Object>();
+        settings.put("enableAutomaticMqttRecovery", Boolean.TRUE);
+        assertTrue(Smt101Config.fromSettings(settings).resolve().isAutomaticMqttRecoveryEnabled());
+        settings.put("enableAutomaticMqttRecovery", "false");
+        assertFalse(Smt101Config.fromSettings(settings).resolve().isAutomaticMqttRecoveryEnabled());
     }
 
     @Test

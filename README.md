@@ -24,8 +24,9 @@ topics, payloads, or hardware interfaces and are not currently confirmed.
 | Door 1 / Door 2 | OEM MQTT status publications | Binary sensors with the `door` device class |
 | RGB Backlight | OEM MQTT command and state topics | On/off, brightness, and RGB color |
 
-The plugin does not request Shizuku access, inspect `/dev/input`, or call
-the OEM `com.broadcastinterface` diagnostic service.
+The plugin does not require Shizuku or root and does not inspect `/dev/input`.
+Optional automatic recovery uses the tablet's exported
+`com.broadcastinterface.ApiSystemService` to start a stopped OEM publisher.
 
 ## Configuration
 
@@ -33,6 +34,45 @@ the OEM `com.broadcastinterface` diagnostic service.
 | --- | --- | --- | --- |
 | `enableEmbeddedMqttBroker` | boolean | `true` | Hosts the MQTT capture broker used to receive OEM sensor publications. |
 | `mqttClientId` | string | blank | Must match `client_id` in the tablet's MQTT settings, such as `office`. Blank enables automatic discovery. |
+| `enableAutomaticMqttRecovery` | boolean | `false` | Opt-in recovery of the stopped OEM MQTT publisher through the OEM system service, without Shizuku or root. |
+
+### Automatic OEM publisher recovery
+
+The confirmed firmware declares `iot_mqtt_client` as a disabled, `oneshot`
+Android init service. It does not automatically restart after a crash, even
+when `persist.start.mqtt` remains `1`. This leaves sensors `Unknown` while
+the plugin's broker is still listening.
+
+To enable recovery, enable **Automatically recover stopped OEM MQTT
+publisher** in the plugin page. No Shizuku startup, permission prompt, root,
+or external computer is required. Capture continues to work with recovery
+disabled. After reboot, recovery resumes when Kiosk Satellite starts the
+enabled plugin; ensure Kiosk Satellite is configured to launch on boot.
+
+While the embedded broker is listening, the plugin checks the service once
+per minute. On the confirmed firmware only, when tablet MQTT is enabled
+(`persist.start.mqtt=1`) and the service is `stopped`, it reapplies
+the MQTT start property through the OEM Binder service's
+`setSystemProperties` operation. Android init starts the OEM service with its
+normal identity; the plugin does not launch a daemon itself.
+It verifies that the service is running after two seconds and logs that it
+is waiting for publications. Actual sensor readings still come exclusively
+from MQTT, not from the restart result.
+
+Running services and disabled tablet MQTT are left unchanged. Restart attempts
+and failed checks are limited to once every five minutes. Rejected service
+bindings, unexpected service states, unsupported firmware, timeouts, and
+transaction failures are reported in the plugin status and log. Disabling
+recovery or the plugin stops new checks; an already submitted operation may
+finish. The plugin does not stop the OEM publisher when disabled.
+
+The Binder descriptor and transaction number are verified for the confirmed
+firmware only. Recovery sends only the fixed `persist.start.mqtt=1` operation;
+it does not expose arbitrary OEM commands or property writes. SDK 1 has no
+Android Context accessor, so recovery obtains the host application using
+`ActivityThread.currentApplication`, verified on this firmware with target
+SDK 36. If a future host or firmware blocks that lookup, recovery reports
+the failure rather than silently claiming success.
 
 ## Embedded MQTT sensor bridge
 

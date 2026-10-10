@@ -49,6 +49,7 @@ public final class Smt101Plugin implements KioskPlugin {
     private final ExecutorService commandExecutor =
             Executors.newSingleThreadExecutor(new PluginThreadFactory("smt101-commands"));
     private final Clock clock;
+    private final Smt101MqttRecovery mqttRecovery = new Smt101MqttRecovery();
     private final Object stateLock = new Object();
 
     private volatile PluginHost host;
@@ -214,6 +215,7 @@ public final class Smt101Plugin implements KioskPlugin {
         }
         executor.shutdownNow();
         commandExecutor.shutdownNow();
+        mqttRecovery.stop();
     }
 
     private void scheduleConfiguration(final Smt101Config newConfig) {
@@ -234,6 +236,8 @@ public final class Smt101Plugin implements KioskPlugin {
         if (!running) {
             return;
         }
+        mqttRecovery.configure(resolvedConfig.isEmbeddedMqttBrokerEnabled()
+                && resolvedConfig.isAutomaticMqttRecoveryEnabled());
         configuredTopicPrefix = resolvedConfig.getMqttTopicPrefix();
         rgbTopicPrefix = configuredTopicPrefix;
         switch1TopicPrefix = configuredTopicPrefix;
@@ -432,6 +436,10 @@ public final class Smt101Plugin implements KioskPlugin {
             return;
         }
         long now = clock.nowMillis();
+        Smt101MqttBroker broker = mqttBroker;
+        if (broker != null && broker.getBoundAddress() != null) {
+            mqttRecovery.check(host, now);
+        }
         checkMqttSilence(now);
         synchronized (stateLock) {
             for (Map.Entry<String, Object> entry : lastKnownStates.entrySet()) {
@@ -546,6 +554,7 @@ public final class Smt101Plugin implements KioskPlugin {
     }
 
     private void stopServices() {
+        mqttRecovery.configure(false);
         stopEmbeddedMqttBroker();
     }
 

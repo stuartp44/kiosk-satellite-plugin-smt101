@@ -6,14 +6,17 @@ final class Smt101Config {
     private static final boolean DEFAULT_ENABLE_EMBEDDED_MQTT_BROKER = true;
 
     private final boolean embeddedMqttBrokerEnabled;
+    private final boolean automaticMqttRecoveryEnabled;
     private final String mqttTopicPrefix;
     private final boolean mqttTopicPrefixValid;
 
     private Smt101Config(
             boolean embeddedMqttBrokerEnabled,
+            boolean automaticMqttRecoveryEnabled,
             String mqttTopicPrefix,
             boolean mqttTopicPrefixValid) {
         this.embeddedMqttBrokerEnabled = embeddedMqttBrokerEnabled;
+        this.automaticMqttRecoveryEnabled = automaticMqttRecoveryEnabled;
         this.mqttTopicPrefix = mqttTopicPrefix;
         this.mqttTopicPrefixValid = mqttTopicPrefixValid;
     }
@@ -23,6 +26,7 @@ final class Smt101Config {
         String normalizedPrefix = normalizeTopicPrefix(configuredPrefix);
         return new Smt101Config(
                 getBoolean(settings, "enableEmbeddedMqttBroker", DEFAULT_ENABLE_EMBEDDED_MQTT_BROKER),
+                getBoolean(settings, "enableAutomaticMqttRecovery", false),
                 normalizedPrefix,
                 configuredPrefix.isEmpty() || normalizedPrefix != null);
     }
@@ -30,6 +34,7 @@ final class Smt101Config {
     Smt101ResolvedConfig resolve() {
         return new Smt101ResolvedConfig(
                 embeddedMqttBrokerEnabled,
+                automaticMqttRecoveryEnabled,
                 mqttTopicPrefix,
                 mqttTopicPrefixValid);
     }

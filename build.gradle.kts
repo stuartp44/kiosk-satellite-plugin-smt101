@@ -157,7 +157,12 @@ fun androidJar(): File {
     } else {
         maxByVersion(candidates) { it.name } ?: error("No Android platforms with android.jar were found under ${platformsDir.absolutePath}.")
     }
+
     return selected.resolve("android.jar")
+}
+
+dependencies {
+    compileOnly(files(provider { androidJar() }))
 }
 
 fun d8Binary(): File {

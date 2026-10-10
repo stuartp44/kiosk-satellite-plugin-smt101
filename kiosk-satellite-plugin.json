@@ -14,6 +14,14 @@
   ],
   "settings": [
     {
+      "key": "enableAutomaticMqttRecovery",
+      "type": "boolean",
+      "title": "Automatically recover stopped OEM MQTT publisher",
+      "default": false,
+      "group": "Embedded MQTT broker",
+      "description": "Uses the tablet's OEM system service, without Shizuku or root. Checks once per minute while the embedded broker is listening. On the confirmed firmware, starts the OEM publisher only if tablet MQTT is enabled and the service is stopped. Recovery attempts are limited to once every five minutes; MQTT settings and running services are left unchanged."
+    },
+    {
       "key": "enableEmbeddedMqttBroker",
       "type": "boolean",
       "title": "Host MQTT capture broker on this tablet",
