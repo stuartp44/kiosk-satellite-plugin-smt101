@@ -275,6 +275,101 @@ can bind port 1883.
 Switch and RGB backlight commands are sent from a dedicated plugin thread,
 so a stalled MQTT write cannot trip Kiosk's plugin callback timeout.
 
+## Serial and IR observations
+
+The following observations were made on 10 October 2026 against the
+firmware listed under **Confirmed hardware**. They describe investigation
+results, not implemented plugin features. The tablet has separate physical
+RS232 and RS485 ports; this plugin currently exposes neither port nor IR.
+
+### UART access and mapping
+
+| Device node | Observation |
+| --- | --- |
+| `/dev/ttyS1` | Labelled `smt_serial_device`; candidate for one external serial connector |
+| `/dev/ttyS9` | Labelled `smt_serial_device`; candidate for the other external serial connector |
+| `/dev/ttyS6` | Explicitly selected by the OEM Zigbee startup configuration at 115200 baud; a responding physical radio has not been verified |
+
+The mapping of `/dev/ttyS1` and `/dev/ttyS9` to RS232 versus RS485 is
+**not confirmed**. Three internal UART nodes do not mean three external
+serial connectors. Baud rates, connector pinouts, and RS485 transmit/receive
+direction control also remain unverified.
+
+A temporary diagnostic plugin tested read/write opens from inside Kiosk
+Satellite, under its actual application identity. All three nodes returned
+`EACCES (Permission denied)`, with explicit SELinux read/write denials.
+No port opened, no serial data was read or transmitted, and no serial
+configuration was changed.
+
+The firmware includes `/system/xbin/lmiot-efr32`, whose binary contains
+Silicon Labs Ember/Zigbee gateway functions. Both the OEM startup script
+and the `zigbee_gw` init declaration select `/dev/ttyS6` at 115200 baud.
+This confirms the software's intended Zigbee UART, not the presence or
+health of a radio on this particular tablet.
+
+At inspection, no Zigbee gateway or bridge process was running, and the
+queried Zigbee init-service properties were absent. The init declaration
+points to `/data/vensi/lmiot-efr32`, which was not accessible through ADB;
+the older `zigbee` service declaration in the board init file is commented
+out. The presence of scripts and binaries therefore does not establish
+that the gateway is active or correctly installed.
+
+Although the nodes have permissive filesystem permissions, the firmware's
+SELinux policy restricts access. Its vendor policy explicitly allows
+platform/system application domains to access `smt_serial_device`, but
+Kiosk Satellite runs in the `untrusted_app` domain. Adding a native serial
+library does not give the plugin the OEM apps' security identity.
+
+### OEM apps and services inspected
+
+| Area | Result |
+| --- | --- |
+| OEM Binder service | No dedicated serial open/read/write or file-descriptor handoff API was found in the inspected interface |
+| OEM `executeCommand` hook | An identity-only call from Kiosk Satellite reached the OEM service, but failed because its implementation tries to launch `su`: `Cannot run program "su": No such file or directory` |
+| KeepAlive, OEM kiosk, and Settings apps | No serial-forwarding API was found in the inspected implementations |
+| Factory-test apps | Serial diagnostics exist, but no callable serial-serving service appeared in the inspected exported component listings; their APKs were not readable through ADB, so inspection is incomplete |
+| Firmware Zigbee bridge | A Zigbee/MQTT stack exists, but this does not establish a general-purpose RS232/RS485 network bridge |
+| Android serial service | Present; the tested query was rejected because it requires restricted `android.permission.SERIAL_PORT` access |
+| Android IR support | No standard `consumer_ir` service or advertised consumer-IR feature was found; an OEM-specific IR interface has not been established |
+
+Launching the generic factory serial test directly tried `/dev/ttySnull`
+and failed, indicating missing port-selection input. That result is not
+evidence of faulty serial hardware. The OEM service used for MQTT recovery
+performs an operation on the plugin's behalf; it does not transfer its
+permissions to Kiosk Satellite.
+
+### Possible Home Assistant serial bridge
+
+The intended direction is for Home Assistant to use equipment connected to
+the **tablet's** RS232 or RS485 connector over the network:
+
+```text
+Home Assistant <-> tablet network serial endpoint <-> tablet RS232 / RS485 <-> equipment
+```
+
+Kiosk Satellite supports networking and native plugin libraries, but direct
+UART access is blocked under the tested firmware policy. No usable existing
+OEM serial-serving path has been verified.
+
+A possible solution is a manufacturer-authorized companion service or a
+firmware update exposing a narrowly scoped serial API. Manufacturer signing
+or installation alone must not be assumed sufficient: the service also needs
+the appropriate Android permissions and SELinux authorization. It could
+perform UART operations on the plugin's behalf or host the network endpoint
+itself.
+
+After hardware access is established, choose raw TCP, RFC2217, or another
+transport supported by the intended Home Assistant integration. RS232 and
+RS485 should have independent configuration and exclusive client ownership.
+Network serial endpoints must be restricted to a trusted LAN/VPN and
+authorized clients, not exposed directly to the internet. IR would require
+a separate verified interface; network serial support does not automatically
+expose IR.
+
+Temporary diagnostic plugins were removed after testing. No firmware
+permissions were changed, and the existing MQTT sensor plugin was left
+enabled.
+
 ## Build and test
 
 Requirements:
