@@ -338,6 +338,31 @@ evidence of faulty serial hardware. The OEM service used for MQTT recovery
 performs an operation on the plugin's behalf; it does not transfer its
 permissions to Kiosk Satellite.
 
+### Android serial API versions and permissions
+
+The public
+[`android.hardware.serial.SerialPort`](https://developer.android.com/reference/android/hardware/serial/SerialPort)
+API, including `requestOpen()`, was added in **API level 37**. It is not
+available on the confirmed tablet's **Android 14 / API level 34** firmware.
+This newer public API is distinct from the older restricted Android serial
+service already present on the tablet.
+
+Direct inspection confirmed that this firmware declares
+`android.permission.SERIAL_PORT` with protection level
+`signature|privileged`. The permission exists, but it is not a normal
+runtime permission that a user can grant to Kiosk Satellite through a
+settings prompt.
+
+The UART access probe used direct device opens rather than the Java serial
+API and was still rejected by SELinux. Building a plugin against API 37
+does not add that API to Android 14 or remove the device-access restrictions.
+
+A manufacturer firmware upgrade supporting the newer public API could
+provide another route. Its availability alone does not prove that the OEM
+exposes these onboard RS232/RS485 ports through it: port enumeration,
+authorization, and actual operation would need to be verified on the
+upgraded firmware.
+
 ### Possible Home Assistant serial bridge
 
 The intended direction is for Home Assistant to use equipment connected to
