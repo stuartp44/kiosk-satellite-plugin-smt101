@@ -1,15 +1,21 @@
 # SMT101x Sensors for Kiosk Satellite
 
 This SDK 1 Kiosk Satellite plugin exposes the tablet's temperature,
-humidity, switch/door inputs, and RGB backlight as Kiosk Satellite entities.
+humidity, distance (on equipped units), switch/door inputs, and RGB backlight
+as Kiosk Satellite entities.
 
-## Confirmed hardware
+## Known devices
 
-This plugin is developed and confirmed against:
+| Firmware/build | Identification | Verification |
+| --- | --- | --- |
+| `ZX-SMT1019-R157-V1.0A-10.1-GG-K1.29U-20260707` | SMT1019-R157 V1.0A | Original confirmed hardware, including automatic OEM MQTT recovery |
+| `ZX-SMT1019-R157-V2.0-10.1-GG-K2.15U-20260916` | SMT1019-R157 V2.0; Android model `rk3576_u`, product/device `WF2489T`, manufacturer `Electron`, brand `Apolosign`; Android 14 / API 34 | Identified through ADB on 13 October 2026; OEM temperature, humidity, and distance MQTT publications observed |
 
-```text
-ZX-SMT1019-R157-V1.0A-10.1-GG-K1.29U-20260707
-```
+The V2.0 unit uses the same observed sensor MQTT format. Its automatic OEM
+MQTT recovery interface has not been verified and remains disabled by the
+firmware allowlist. RGB, switch, and door support on this variant is not
+confirmed by the supplied sensor log; entities are discovered only when
+their valid status publications arrive.
 
 Other SMT101-family devices or firmware versions may use different MQTT
 topics, payloads, or hardware interfaces and are not currently confirmed.
@@ -20,6 +26,7 @@ topics, payloads, or hardware interfaces and are not currently confirmed.
 | --- | --- | --- |
 | Temperature | OEM MQTT publication | `°C`, temperature, measurement, 1 decimal |
 | Humidity | OEM MQTT publication | `%`, humidity, measurement, 0 decimals |
+| Distance | OEM MQTT publication (on equipped units) | `mm`, distance, measurement, 0 decimals |
 | Switch 1 / Switch 2 | OEM MQTT status and command topics | Writable switches |
 | Door 1 / Door 2 | OEM MQTT status publications | Binary sensors with the `door` device class |
 | RGB Backlight | OEM MQTT command and state topics | On/off, brightness, and RGB color |
@@ -178,6 +185,7 @@ The broker recognizes these topic tokens:
 
 - Temperature: `temperature`, `temp`, `ths`
 - Humidity: `humidity`, `humid`, `hum`, `moisture`
+- Distance: `distance`
 
 Payloads may be plain numbers or JSON objects with matching keys. Known OEM
 examples are:
@@ -185,11 +193,18 @@ examples are:
 ```text
 office/sensors/temperature {"temperature":26.4}
 office/sensors/humidity {"humidity":38.5}
+rk3576_u/sensors/distance {"distance":802}
 office/switch1/status {"state":"OFF"}
 office/switch2/status {"state":"OFF"}
 office/door1/status {"state":"OFF"}
 office/door2/status {"state":"OFF"}
 ```
+
+Distance readings are exposed unchanged as millimetres (for example, `802`
+means `802 mm`), based on the reported unit's scale. The MQTT payload does
+not declare a unit. Units without a distance publication have no Distance
+entity.
+Negative or non-finite distance readings are rejected and logged.
 
 The prefix is not fixed: any topic ending in `/switch1/status`,
 `/switch2/status`, `/door1/status`, or `/door2/status` is recognized.
@@ -213,6 +228,17 @@ Power commands are sent to `light/switch` as plain `ON` or `OFF` payloads.
 RGB commands are sent to `rgb/set` as plain comma-separated channels such
 as `255,193,141`. Brightness commands use `brightness/set` with a plain
 0–100 value. Status publications remain JSON.
+In local mode, every successful OEM connection to the embedded MQTT broker
+arms a check of the next valid RGB power status, including reconnects.
+If it is `ON`, the plugin sends one `OFF` command on the command thread.
+Brightness and color reports do not trigger this check. Later power changes
+are left alone until the next MQTT connection. A settings change alone does
+not arm the check; the ensuing MQTT connection does. A user RGB command
+before the first power report cancels the current connection's check.
+Units without RGB power status receive no automatic command. External MQTT
+recovery mode does not control the RGB light. Delivery failures are reported
+through the existing command status and log; the command is not retried
+until a new connection and an `ON` power report.
 `office/backlight/status` is the tablet display backlight, not the RGB
 light, and is intentionally ignored.
 
@@ -243,14 +269,21 @@ keeps it inaccessible to other devices.
 
 ### Entity state refresh and diagnostics
 
-Every 60 seconds the plugin re-sends the last received temperature,
-humidity, door, and switch states to Kiosk Satellite. A reading that was
-dropped by the host therefore recovers without waiting for the OEM value to
-change. The cache is reset, and the entities return to `Unknown`, when the
-plugin starts or its settings change.
+All entities are detected from their own valid MQTT publications, rather than
+created at startup. Temperature, humidity, distance, doors, switches, and RGB
+backlight therefore appear only on units that publish their readings or status.
+Any valid RGB power, brightness, or color status detects the RGB backlight.
+External MQTT recovery mode does not create local entities.
 
-Temperature and humidity readings older than 30 minutes are not re-sent;
-they are set to `Unknown` and the log records
+Every 60 seconds the plugin re-sends the last received temperature,
+humidity, distance, door, and switch states to Kiosk Satellite. A reading
+dropped by the host therefore recovers without waiting for the OEM value to
+change. The cache is reset and existing entities are removed when the
+plugin starts or its settings change. Each entity reappears after its next
+valid publication.
+
+Temperature, humidity, and distance readings older than 30 minutes are not
+re-sent; they are set to `Unknown` and the log records
 `No sensor.<name> reading received for 30 minutes`. Door and switch states
 may only be published by the OEM client when they change, so they do not
 expire. If no MQTT publication of any kind arrives for 10 minutes, the plugin
@@ -278,7 +311,7 @@ so a stalled MQTT write cannot trip Kiosk's plugin callback timeout.
 ## Serial and IR observations
 
 The following observations were made on 10 October 2026 against the
-firmware listed under **Confirmed hardware**. They describe investigation
+original V1.0A firmware listed under **Known devices**. They describe investigation
 results, not implemented plugin features. The tablet has separate physical
 RS232 and RS485 ports; this plugin currently exposes neither port nor IR.
 
