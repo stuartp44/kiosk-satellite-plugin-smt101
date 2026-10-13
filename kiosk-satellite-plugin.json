@@ -53,6 +53,7 @@
       "readings": [
         "sensor.temperature",
         "sensor.humidity",
+        "sensor.distance",
         "switch.switch1",
         "switch.switch2",
         "binary_sensor.door1",

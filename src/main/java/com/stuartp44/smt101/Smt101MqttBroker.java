@@ -31,9 +31,13 @@ final class Smt101MqttBroker {
     private static final Pattern HUMIDITY_JSON_VALUE = Pattern.compile(
             "\"(?:humidity|humid|hum|moisture)\"\\s*:\\s*\"?(-?\\d+(?:\\.\\d+)?)\"?",
             Pattern.CASE_INSENSITIVE);
+    private static final Pattern DISTANCE_JSON_VALUE = Pattern.compile(
+            "\"distance\"\\s*:\\s*\"?(-?\\d+(?:\\.\\d+)?)\"?",
+            Pattern.CASE_INSENSITIVE);
     enum ReadingType {
         TEMPERATURE,
         HUMIDITY,
+        DISTANCE,
         UNKNOWN
     }
 
@@ -328,6 +332,9 @@ final class Smt101MqttBroker {
                 || normalized.contains("moisture") || hasTopicToken(normalized, "hum")) {
             return ReadingType.HUMIDITY;
         }
+        if (hasTopicToken(normalized, "distance")) {
+            return ReadingType.DISTANCE;
+        }
         return ReadingType.UNKNOWN;
     }
 
@@ -361,6 +368,8 @@ final class Smt101MqttBroker {
             pattern = TEMPERATURE_JSON_VALUE;
         } else if (type == ReadingType.HUMIDITY) {
             pattern = HUMIDITY_JSON_VALUE;
+        } else if (type == ReadingType.DISTANCE) {
+            pattern = DISTANCE_JSON_VALUE;
         } else {
             return null;
         }

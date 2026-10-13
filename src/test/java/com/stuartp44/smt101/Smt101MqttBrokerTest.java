@@ -25,11 +25,32 @@ class Smt101MqttBrokerTest {
                 Smt101MqttBroker.ReadingType.HUMIDITY,
                 Smt101MqttBroker.inferReadingType("panel/humidity"));
         assertEquals(
+                Smt101MqttBroker.ReadingType.DISTANCE,
+                Smt101MqttBroker.inferReadingType("rk3576_u/sensors/distance"));
+        assertEquals(
+                Smt101MqttBroker.ReadingType.UNKNOWN,
+                Smt101MqttBroker.inferReadingType("panel/sensors/distanceometer"));
+        assertEquals(
                 Smt101MqttBroker.ReadingType.UNKNOWN,
                 Smt101MqttBroker.inferReadingType("panel/status"));
         assertEquals(
                 Smt101MqttBroker.ReadingType.UNKNOWN,
                 Smt101MqttBroker.inferReadingType("panel/sensors/light"));
+    }
+
+    @Test
+    void extractsDistanceReadings() {
+        assertEquals(802.0d, Smt101MqttBroker.parseInferredReading(
+                "{\"distance\":802}", Smt101MqttBroker.ReadingType.DISTANCE));
+        assertEquals(2152.0d, Smt101MqttBroker.parseInferredReading(
+                "{\"distance\":\"2152\"}", Smt101MqttBroker.ReadingType.DISTANCE));
+        assertEquals(0.0d, Smt101MqttBroker.parseInferredReading(
+                "0", Smt101MqttBroker.ReadingType.DISTANCE));
+        assertEquals(802.5d, Smt101MqttBroker.parseInferredReading(
+                "802.5", Smt101MqttBroker.ReadingType.DISTANCE));
+        assertNull(Smt101MqttBroker.parseInferredReading(
+                "{\"temperature\":30,\"distance_text\":\"unknown\"}",
+                Smt101MqttBroker.ReadingType.DISTANCE));
     }
 
     @Test

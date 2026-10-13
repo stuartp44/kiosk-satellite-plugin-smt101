@@ -1,6 +1,7 @@
 package com.stuartp44.smt101;
 
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -18,6 +19,7 @@ public final class Smt101Plugin implements KioskPlugin {
     private static final int MQTT_BROKER_PORT = 1883;
     private static final String TEMPERATURE_NAME = "Temperature";
     private static final String HUMIDITY_NAME = "Humidity";
+    private static final String DISTANCE_NAME = "Distance";
     private static final String RGB_BACKLIGHT_NAME = "RGB Backlight";
     private static final String RGB_BACKLIGHT_KEY = "rgb_backlight";
     private static final long STATE_REFRESH_SECONDS = 60L;
@@ -49,6 +51,7 @@ public final class Smt101Plugin implements KioskPlugin {
     private final ExecutorService commandExecutor =
             Executors.newSingleThreadExecutor(new PluginThreadFactory("smt101-commands"));
     private final Clock clock;
+    private final int mqttBrokerPort;
     private final Smt101MqttRecovery mqttRecovery;
     private volatile boolean localMqttMode;
     private final Object stateLock = new Object();
@@ -59,6 +62,8 @@ public final class Smt101Plugin implements KioskPlugin {
     private Smt101MqttBroker mqttBroker;
     private volatile long mqttBrokerGeneration;
     private volatile Smt101RgbLight.State rgbBacklightState = Smt101RgbLight.initialState();
+    private volatile boolean rgbBacklightDetected;
+    private final AtomicBoolean connectionRgbPowerPending = new AtomicBoolean(false);
     private volatile String configuredTopicPrefix;
     private volatile String rgbTopicPrefix;
     private volatile String switch1TopicPrefix;
@@ -82,8 +87,13 @@ public final class Smt101Plugin implements KioskPlugin {
     }
 
     Smt101Plugin(Clock clock, Smt101MqttRecovery mqttRecovery) {
+        this(clock, mqttRecovery, MQTT_BROKER_PORT);
+    }
+
+    Smt101Plugin(Clock clock, Smt101MqttRecovery mqttRecovery, int mqttBrokerPort) {
         this.clock = clock;
         this.mqttRecovery = mqttRecovery;
+        this.mqttBrokerPort = mqttBrokerPort;
     }
 
     @Override
@@ -111,10 +121,22 @@ public final class Smt101Plugin implements KioskPlugin {
         }
         final Map<String, Object> command =
                 payload == null ? null : new LinkedHashMap<String, Object>(payload);
+        if (("light." + RGB_BACKLIGHT_KEY).equals(event)) {
+            connectionRgbPowerPending.set(false);
+        }
+        enqueueCommand(event, command);
+    }
+
+    private void enqueueCommand(final String event, final Map<String, Object> command) {
+        final long generation = mqttBrokerGeneration;
         try {
             commandExecutor.execute(new Runnable() {
                 @Override
                 public void run() {
+                    if (!running || mqttBrokerGeneration != generation) {
+                        safeLog("Command " + event + " cancelled because the plugin session or configuration changed.");
+                        return;
+                    }
                     try {
                         handleCommandEvent(event, command);
                     } catch (RuntimeException exception) {
@@ -123,7 +145,8 @@ public final class Smt101Plugin implements KioskPlugin {
                     }
                 }
             });
-        } catch (RejectedExecutionException ignored) {
+        } catch (RejectedExecutionException exception) {
+            safeLog("Command " + event + " could not be queued: " + summarize(exception));
         }
     }
 
@@ -133,6 +156,10 @@ public final class Smt101Plugin implements KioskPlugin {
             return;
         }
 
+        if (!rgbBacklightDetected) {
+            safeStatus("RGB backlight command could not be delivered because no RGB status has been received.", true);
+            return;
+        }
         Smt101RgbLight.State requested = Smt101RgbLight.applyCommand(rgbBacklightState, payload);
         Smt101MqttBroker broker = mqttBroker;
         java.util.List<Smt101RgbLight.Publication> publications =
@@ -168,6 +195,10 @@ public final class Smt101Plugin implements KioskPlugin {
         Smt101MqttBroker broker = mqttBroker;
         if (prefix == null || broker == null) {
             safeStatus("Switch command could not be delivered because its MQTT topic prefix is not known.", true);
+            return;
+        }
+        if (!lastKnownStates.containsKey("switch." + key)) {
+            safeStatus("Switch command could not be delivered because no switch status has been received.", true);
             return;
         }
         boolean requested = ((Boolean) requestedValue).booleanValue();
@@ -229,8 +260,8 @@ public final class Smt101Plugin implements KioskPlugin {
             executor.execute(new Runnable() {
                 @Override
                 public void run() {
-                    publishConfiguredEntities();
                     stopServices();
+                    resetDetectedEntities();
                     startServices(newConfig.resolve());
                 }
             });
@@ -264,7 +295,7 @@ public final class Smt101Plugin implements KioskPlugin {
         mqttBrokerGeneration += 1L;
         final long generation = mqttBrokerGeneration;
         final Smt101MqttBroker broker = new Smt101MqttBroker(
-                MQTT_BROKER_PORT,
+                mqttBrokerPort,
                 new Smt101MqttBroker.Listener() {
                     @Override
                     public void onStarted(int port) {
@@ -280,9 +311,12 @@ public final class Smt101Plugin implements KioskPlugin {
 
                     @Override
                     public void onClientConnected(String clientId, int protocolLevel, boolean hasUsername) {
-                        if (running && mqttBrokerGeneration == generation) {
-                            safeLog("Embedded MQTT client connected: clientId=\"" + safeMqttText(clientId)
-                                    + "\", protocolLevel=" + protocolLevel + ", usernameSupplied=" + hasUsername + ".");
+                        synchronized (stateLock) {
+                            if (running && mqttBrokerGeneration == generation) {
+                                connectionRgbPowerPending.set(true);
+                                safeLog("Embedded MQTT client connected: clientId=\"" + safeMqttText(clientId)
+                                        + "\", protocolLevel=" + protocolLevel + ", usernameSupplied=" + hasUsername + ".");
+                            }
                         }
                     }
 
@@ -304,10 +338,12 @@ public final class Smt101Plugin implements KioskPlugin {
 
                     @Override
                     public void onMessage(String topic, String payload) {
-                        if (!running || mqttBrokerGeneration != generation) {
-                            return;
+                        synchronized (stateLock) {
+                            if (!running || mqttBrokerGeneration != generation) {
+                                return;
+                            }
+                            handleMqttMessageLocked(topic, payload);
                         }
-                        handleMqttMessage(topic, payload);
                     }
 
                     @Override
@@ -412,13 +448,26 @@ public final class Smt101Plugin implements KioskPlugin {
                     rgbBacklightState, rgbStatus.type, payload);
             if (state != null) {
                 rgbBacklightState = state;
+                rgbBacklightDetected = true;
                 safePublishRgbBacklight(state);
+                if (localMqttMode && rgbStatus.type == Smt101RgbLight.StatusType.POWER
+                        && connectionRgbPowerPending.compareAndSet(true, false) && state.on) {
+                    Map<String, Object> command = new LinkedHashMap<String, Object>();
+                    command.put("on", Boolean.FALSE);
+                    safeLog("RGB backlight is on after MQTT connection; requesting OFF.");
+                    enqueueCommand("light." + RGB_BACKLIGHT_KEY, command);
+                }
             }
             return;
         }
         Smt101MqttBroker.ReadingType type = Smt101MqttBroker.inferReadingType(topic);
         Double value = Smt101MqttBroker.parseInferredReading(payload, type);
-        if (value == null) {
+        if (value == null || value.isNaN() || value.isInfinite()
+                || (type == Smt101MqttBroker.ReadingType.DISTANCE && value.doubleValue() < 0.0d)) {
+            if (type != Smt101MqttBroker.ReadingType.UNKNOWN) {
+                safeLog("Invalid " + type.name().toLowerCase(Locale.ROOT)
+                        + " reading on MQTT topic \"" + safeMqttText(topic) + "\".");
+            }
             return;
         }
         if (type == Smt101MqttBroker.ReadingType.TEMPERATURE) {
@@ -429,6 +478,10 @@ public final class Smt101Plugin implements KioskPlugin {
             lastKnownStates.put("sensor.humidity", value);
             lastReceivedMs.put("sensor.humidity", Long.valueOf(now));
             publishHumidity(value);
+        } else if (type == Smt101MqttBroker.ReadingType.DISTANCE) {
+            lastKnownStates.put("sensor.distance", value);
+            lastReceivedMs.put("sensor.distance", Long.valueOf(now));
+            publishDistance(value);
         }
     }
 
@@ -466,6 +519,8 @@ public final class Smt101Plugin implements KioskPlugin {
                     publishTemperature((Double) state);
                 } else if ("sensor.humidity".equals(id)) {
                     publishHumidity((Double) state);
+                } else if ("sensor.distance".equals(id)) {
+                    publishDistance((Double) state);
                 } else if ("binary_sensor.door1".equals(id)) {
                     safePublishBinarySensor(DOOR1, (Boolean) state);
                 } else if ("binary_sensor.door2".equals(id)) {
@@ -501,6 +556,10 @@ public final class Smt101Plugin implements KioskPlugin {
         safePublishSensor("humidity", HUMIDITY_NAME, sensorMetadata("%", "humidity", 0), value);
     }
 
+    private void publishDistance(Double value) {
+        safePublishSensor("distance", DISTANCE_NAME, sensorMetadata("mm", "distance", 0), value);
+    }
+
     private void scheduleStateRefresh() {
         try {
             executor.scheduleWithFixedDelay(new Runnable() {
@@ -523,6 +582,7 @@ public final class Smt101Plugin implements KioskPlugin {
 
     private void stopEmbeddedMqttBroker() {
         mqttBrokerGeneration += 1L;
+        connectionRgbPowerPending.set(false);
         lastMqttActivityMs = 0L;
         Smt101MqttBroker broker = mqttBroker;
         mqttBroker = null;
@@ -536,23 +596,20 @@ public final class Smt101Plugin implements KioskPlugin {
         }
     }
 
-    private void publishConfiguredEntities() {
+    private void resetDetectedEntities() {
         synchronized (stateLock) {
             lastKnownStates.clear();
             lastReceivedMs.clear();
+            rgbBacklightState = Smt101RgbLight.initialState();
+            rgbBacklightDetected = false;
+            removeEntities();
         }
-        publishTemperature(null);
-        publishHumidity(null);
-        safeRemoveBinarySensor("switch1");
-        safeRemoveBinarySensor("switch2");
-        safePublishBinarySensor(DOOR1, null);
-        safePublishBinarySensor(DOOR2, null);
-        safePublishRgbBacklight(rgbBacklightState);
     }
 
     private void removeEntities() {
         safeRemoveSensor("temperature");
         safeRemoveSensor("humidity");
+        safeRemoveSensor("distance");
         safeRemoveBinarySensor("switch1");
         safeRemoveBinarySensor("switch2");
         safeRemoveSwitch("switch1");
