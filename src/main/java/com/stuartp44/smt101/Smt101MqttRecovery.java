@@ -138,6 +138,11 @@ final class Smt101MqttRecovery {
         return !localMqttMode || brokerListening;
     }
 
+    static boolean isSupportedFirmware(String firmware) {
+        return "ZX-SMT1019-R157-V1.0A-10.1-GG-K1.29U-20260707".equals(firmware)
+                || "ZX-SMT1019-R157-V2.0-10.1-GG-K2.15U-20260916".equals(firmware);
+    }
+
     private void problem(PluginHost host, String message) {
         if (!message.equals(lastProblem)) {
             lastProblem = message;
