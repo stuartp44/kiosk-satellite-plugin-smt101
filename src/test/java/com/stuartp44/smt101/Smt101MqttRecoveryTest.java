@@ -35,6 +35,20 @@ class Smt101MqttRecoveryTest {
     }
 
     @Test
+    void recoveryOnlySupportsExactlyVerifiedFirmwareBuilds() {
+        assertTrue(Smt101MqttRecovery.isSupportedFirmware(
+                "ZX-SMT1019-R157-V1.0A-10.1-GG-K1.29U-20260707"));
+        assertTrue(Smt101MqttRecovery.isSupportedFirmware(
+                "ZX-SMT1019-R157-V2.0-10.1-GG-K2.15U-20260916"));
+        assertFalse(Smt101MqttRecovery.isSupportedFirmware(
+                "ZX-SMT1019-R157-V2.0-10.1-GG-K2.16U-20261017"));
+        assertFalse(Smt101MqttRecovery.isSupportedFirmware(
+                "ZX-SMT1019-R157-V1.0A-10.1-GG-K1.29U-20260707-extra"));
+        assertFalse(Smt101MqttRecovery.isSupportedFirmware(""));
+        assertFalse(Smt101MqttRecovery.isSupportedFirmware(null));
+    }
+
+    @Test
     void externalModeChecksWithoutBrokerWhileLocalModeRequiresListeningBroker() {
         assertTrue(Smt101MqttRecovery.canCheck(false, false));
         assertTrue(Smt101MqttRecovery.canCheck(false, true));

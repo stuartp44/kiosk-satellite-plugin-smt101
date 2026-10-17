@@ -17,9 +17,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 final class Smt101OemRecovery implements Smt101MqttRecovery.Backend {
-    static final String FIRMWARE = "ZX-SMT1019-R157-V1.0A-10.1-GG-K1.29U-20260707";
     private static final String DESCRIPTOR = "com.broadcastinterface.ISystemInterface";
-    // Verified against the Binder protocol in the confirmed firmware; never use on other builds.
+    // Verified against the Binder protocol in both allowlisted builds; never use on other builds.
     private static final int SET_SYSTEM_PROPERTIES = 11;
     private final ScheduledExecutorService watchdog = Executors.newSingleThreadScheduledExecutor(
             runnable -> daemon(runnable, "smt101-oem-watchdog"));
@@ -67,8 +66,10 @@ final class Smt101OemRecovery implements Smt101MqttRecovery.Backend {
     }
 
     private Smt101MqttRecovery.Result recover(AtomicBoolean completed, boolean reenableDisabledMqtt) throws Exception {
-        if (!FIRMWARE.equals(property("ro.build.display.id"))) {
-            throw new IOException("Unsupported firmware for OEM MQTT recovery");
+        String firmware = property("ro.build.display.id");
+        if (!Smt101MqttRecovery.isSupportedFirmware(firmware)) {
+            throw new IOException("Unsupported firmware for OEM MQTT recovery: " + firmware
+                    + ". Disable automatic recovery; normal MQTT capture remains available.");
         }
         boolean enabled = mqttEnabled();
         String state = property("init.svc.iot_mqtt_client");

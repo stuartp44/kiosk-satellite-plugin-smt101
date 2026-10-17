@@ -9,13 +9,22 @@ as Kiosk Satellite entities.
 | Firmware/build | Identification | Verification |
 | --- | --- | --- |
 | `ZX-SMT1019-R157-V1.0A-10.1-GG-K1.29U-20260707` | SMT1019-R157 V1.0A | Original confirmed hardware, including automatic OEM MQTT recovery |
-| `ZX-SMT1019-R157-V2.0-10.1-GG-K2.15U-20260916` | SMT1019-R157 V2.0; Android model `rk3576_u`, product/device `WF2489T`, manufacturer `Electron`, brand `Apolosign`; Android 14 / API 34 | Identified through ADB on 13 October 2026; OEM temperature, humidity, and distance MQTT publications observed |
+| `ZX-SMT1019-R157-V2.0-10.1-GG-K2.15U-20260916` | SMT1019-R157 V2.0; Android model `rk3576_u`, product/device `WF2489T`, manufacturer `Electron`, brand `Apolosign`; Android 14 / API 34 | Identified through ADB on 13 October 2026; automatic OEM MQTT recovery and resumed sensor publications verified on 17 October 2026 |
 
-The V2.0 unit uses the same observed sensor MQTT format. Its automatic OEM
-MQTT recovery interface has not been verified and remains disabled by the
-firmware allowlist. RGB, switch, and door support on this variant is not
-confirmed by the supplied sensor log; entities are discovered only when
-their valid status publications arrive.
+The V2.0 unit uses the same observed sensor MQTT format. Inspection on
+17 October 2026 confirmed the same OEM recovery Binder protocol and MQTT
+init-service start trigger, so both exact builds above are allowlisted for
+automatic recovery. RGB, switch, and door support on this variant is not
+fully hardware-tested; switch and door status publications were observed
+after recovery, but physical input changes, switch commands, and RGB
+operation remain unverified. Entities are discovered only when their valid
+status publications arrive.
+
+On the V2.0 tablet, the patched plugin restarted an enabled but stopped
+publisher through the OEM service on 17 October 2026. Temperature, humidity,
+and distance readings resumed. When testing a local ZIP on a fleet-managed
+tablet, disable plugin synchronization first; otherwise the leader can
+replace the local build with its configured release.
 
 Other SMT101-family devices or firmware versions may use different MQTT
 topics, payloads, or hardware interfaces and are not currently confirmed.
@@ -161,8 +170,11 @@ transaction failures are reported in the plugin status and log. Disabling
 recovery or the plugin stops new checks; an already submitted operation may
 finish. The plugin does not stop the OEM publisher when disabled.
 
-The Binder descriptor and transaction number are verified for the confirmed
-firmware only. Recovery sends only the fixed `persist.start.mqtt=1` operation;
+The Binder descriptor and transaction number are verified for the two exact
+firmware builds listed under **Known devices**. Other builds remain blocked;
+the error includes the detected build, and normal MQTT capture remains
+available with automatic recovery disabled.
+Recovery sends only the fixed `persist.start.mqtt=1` operation;
 it does not expose arbitrary OEM commands or property writes. SDK 1 has no
 Android Context accessor, so recovery obtains the host application using
 `ActivityThread.currentApplication`, verified on this firmware with target
