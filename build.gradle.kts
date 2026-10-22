@@ -136,6 +136,19 @@ fun minAndroidSdk(): Int = when (val value = readManifest()["minAndroidSdk"]) {
 
 fun builtManifestText(): String {
     val manifest = readManifest()
+    manifest["icon"]?.let { value ->
+        val iconPath = value as? String ?: error("Manifest icon must be a string.")
+        require(iconPath.length in 1..240 && iconPath.split('/').all {
+            it != "." && it != ".." && Regex("[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}").matches(it)
+        }) {
+            "Manifest icon must be a valid path relative to assets/."
+        }
+        val assetsDir = layout.projectDirectory.dir("assets").asFile.canonicalFile
+        val iconFile = File(assetsDir, iconPath).canonicalFile
+        require(iconFile.toPath().startsWith(assetsDir.toPath()) && iconFile.isFile) {
+            "Manifest icon '$iconPath' must resolve to a file under assets/; use a path relative to assets/."
+        }
+    }
     require((manifest["description"] as? String)?.length in 1..1000) {
         "Manifest description must contain 1 to 1000 characters."
     }
@@ -225,6 +238,8 @@ fun stripDirectoryEntries(zipFile: File) {
 
 val generatePackageManifest = tasks.register("generatePackageManifest") {
     inputs.file(manifestFile)
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir(layout.projectDirectory.dir("assets"))
         .withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.property("pluginVersion", providers.provider { packageVersion() })
     outputs.file(generatedManifestFile)
