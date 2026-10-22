@@ -6,7 +6,7 @@
   "apiVersion": 1,
   "minAndroidSdk": 24,
   "entryClass": "com.stuartp44.smt101.Smt101Plugin",
-  "icon": "assets/icon.png",
+  "icon": "icon.png",
   "description": "Two modes for SMT101x tablets: recover the OEM publisher using your existing external MQTT settings, or manage sensors, switches, doors, and RGB backlight through Kiosk Satellite using the built-in local broker, with no separate MQTT server required.",
   "author": "Stuart Pearson",
   "license": "Apache-2.0",
