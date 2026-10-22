@@ -1,8 +1,22 @@
 # SMT101x Sensors for Kiosk Satellite
 
+[![Install in Kiosk Satellite](https://kiosksatellite.com/img/badges/plugin-add.svg)](https://kiosksatellite.com/redirect/plugin/?repository=stuartp44/kiosk-satellite-plugin-smt101)
+
 This SDK 1 Kiosk Satellite plugin exposes the tablet's temperature,
 humidity, distance (on equipped units), switch/door inputs, and RGB backlight
 as Kiosk Satellite entities.
+
+## Disclaimer
+
+This plugin is provided "as is" and without warranties of any kind, to the
+maximum extent permitted by applicable law. Use it at your own risk. You are
+responsible for deciding whether it is suitable for your device and setup,
+reviewing its settings, and testing its behavior. The plugin can interact
+with device MQTT services and controls; do not rely on it for safety-critical
+or other essential functions. To the maximum extent permitted by applicable
+law, the author is not liable for damages or losses arising from use of the
+plugin. Your statutory rights are not affected. See the Apache-2.0 `LICENSE`
+for the full warranty disclaimer and limitation of liability.
 
 ## Known devices
 
