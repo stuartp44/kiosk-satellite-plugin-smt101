@@ -204,6 +204,7 @@ class Smt101MqttBrokerTest {
     @Test
     void publishesCommandsOnlyToSubscribedLocalClient() throws Exception {
         CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch connected = new CountDownLatch(2);
         CountDownLatch subscribed = new CountDownLatch(1);
         AtomicInteger port = new AtomicInteger();
         AtomicReference<String> subscribedTopic = new AtomicReference<String>();
@@ -216,6 +217,7 @@ class Smt101MqttBrokerTest {
 
             @Override
             public void onClientConnected(String clientId, int protocolLevel, boolean hasUsername) {
+                connected.countDown();
             }
 
             @Override
@@ -254,6 +256,7 @@ class Smt101MqttBrokerTest {
             DataInputStream in = new DataInputStream(subscriberSocket.getInputStream());
             writeConnect(out, "oem-command-subscriber");
             readPacket(in);
+            assertTrue(connected.await(2, TimeUnit.SECONDS));
 
             assertEquals(
                     Smt101MqttBroker.PublishResult.CONNECTED_FALLBACK,
