@@ -174,8 +174,8 @@ public final class Smt101Plugin implements KioskPlugin {
             Smt101MqttBroker.PublishResult result =
                     broker.publish(publication.topic, publication.payload);
             if (result == Smt101MqttBroker.PublishResult.NO_CLIENT) {
-                safeLog("Embedded MQTT command not delivered; no OEM MQTT client is connected.");
-                safeStatus("RGB backlight command could not be delivered because the OEM MQTT client is disconnected.", true);
+                safeLog("Embedded MQTT command not delivered; no matching subscriber or status publisher is connected.");
+                safeStatus("RGB backlight command could not be delivered: no matching MQTT subscriber or status publisher.", true);
                 return;
             }
             logCommandDelivery(result);
@@ -210,8 +210,8 @@ public final class Smt101Plugin implements KioskPlugin {
                 + "\", payload=\"" + Smt101MqttBroker.payloadPreview(mqttPayload) + "\".");
         Smt101MqttBroker.PublishResult result = broker.publish(topic, mqttPayload);
         if (result == Smt101MqttBroker.PublishResult.NO_CLIENT) {
-            safeLog("Embedded MQTT command not delivered; no OEM MQTT client is connected.");
-            safeStatus("Switch command could not be delivered because the OEM MQTT client is disconnected.", true);
+            safeLog("Embedded MQTT command not delivered; no matching subscriber or status publisher is connected.");
+            safeStatus("Switch command could not be delivered: no matching MQTT subscriber or status publisher.", true);
             return;
         }
         logCommandDelivery(result);
@@ -222,7 +222,7 @@ public final class Smt101Plugin implements KioskPlugin {
         if (result == Smt101MqttBroker.PublishResult.SUBSCRIBED) {
             safeLog("Embedded MQTT command delivered to subscribed OEM client.");
         } else {
-            safeLog("Embedded MQTT command delivered to connected OEM client without requiring a subscription.");
+            safeLog("Embedded MQTT command delivered to matching status publisher without requiring a subscription.");
         }
     }
 

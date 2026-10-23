@@ -3,10 +3,14 @@
 [![Install in Kiosk Satellite](https://kiosksatellite.com/img/badges/plugin-add.svg)](https://kiosksatellite.com/redirect/plugin/?repository=stuartp44/kiosk-satellite-plugin-smt101)
 
 This SDK 1 Kiosk Satellite plugin exposes the tablet's temperature,
-humidity, distance (on equipped units), switch/door inputs, and RGB backlight
+humidity, distance (on equipped units), relay outputs, door inputs, and RGB backlight
 as Kiosk Satellite entities.
 
 ## Disclaimer
+
+This is an independent community plugin, not affiliated with, endorsed by,
+or supported by Apolosign or the manufacturers of SMT101-family devices
+and their OEM firmware.
 
 This plugin is provided "as is" and without warranties of any kind, to the
 maximum extent permitted by applicable law. Use it at your own risk. You are
@@ -50,7 +54,7 @@ topics, payloads, or hardware interfaces and are not currently confirmed.
 | Temperature | OEM MQTT publication | `°C`, temperature, measurement, 1 decimal |
 | Humidity | OEM MQTT publication | `%`, humidity, measurement, 0 decimals |
 | Distance | OEM MQTT publication (on equipped units) | `mm`, distance, measurement, 0 decimals |
-| Switch 1 / Switch 2 | OEM MQTT status and command topics | Writable switches |
+| Switch 1 / Switch 2 | OEM MQTT status and command topics | Relay 1 / Relay 2 outputs |
 | Door 1 / Door 2 | OEM MQTT status publications | Binary sensors with the `door` device class |
 | RGB Backlight | OEM MQTT command and state topics | On/off, brightness, and RGB color |
 
@@ -241,6 +245,16 @@ publications remain JSON, for example `{"state":"ON"}`. The switches appear
 after their first status publication establishes a confirmed state and
 topic prefix.
 
+Switch 1 controls the tablet's **Relay 1** output; Switch 2 controls
+**Relay 2**. What each relay operates depends on the wiring at your
+installation; the plugin cannot identify the connected load. No particular
+load, contact type, or electrical rating has been verified by this project.
+Check your device's documentation and wiring before using these controls.
+Home Assistant toggles send commands immediately, without a confirmation
+prompt, and may operate connected equipment. Keep unsafe or unverified
+loads disconnected while testing. Physical switch operation on the V2.0
+firmware remains unverified as noted above.
+
 The RGB backlight learns the topic prefix (for example `office`) from the
 tablet's live status publications:
 
@@ -287,8 +301,15 @@ entered. MQTT wildcards (`+` and `#`) are not valid in this setting.
 
 The plugin log records the topic filters requested by the OEM MQTT client
 and every outbound RGB or switch command. When a firmware publishes status
-without subscribing to command topics, the loopback broker also sends the
-command directly to its connected OEM MQTT client and logs that fallback.
+without subscribing to command topics, the loopback broker sends commands
+only to connected clients that have published valid switch or RGB status
+with the exact matching prefix, and logs that fallback. It retains the latest
+prefix for each of the five controllable status channels per connection,
+not a history of publications. An explicit matching subscription takes
+precedence. With neither a matching subscriber nor a known status publisher,
+the command fails visibly instead of being broadcast. Ownership is forgotten
+when a client disconnects or the broker stops; reconnecting clients must
+publish status again or subscribe before they can receive commands.
 
 The broker accepts any MQTT client credentials, but its loopback-only bind
 keeps it inaccessible to other devices.
@@ -495,9 +516,10 @@ When a release is due, `scripts/prepare-release.sh` writes the new version
 into `kiosk-satellite-plugin.json`, runs the same clean build and tests, and
 verifies the ZIP and checksum. semantic-release then commits the manifest back
 to `main` as `chore(release): <version> [skip ci]`, tags `v<version>`, and
-creates the GitHub Release with generated notes. After the new release
-succeeds, older version releases and version tags are removed so only the
-current package remains.
+creates the GitHub Release with generated notes. Older releases, their
+assets, and version tags are retained for version-specific references and
+rollback. Releases deleted by earlier versions of the workflow are not
+automatically restored.
 
 Each release uploads exactly one standalone `kiosk-satellite-plugin.json`
 asset for Plugin Manager discovery, plus the installable ZIP and its

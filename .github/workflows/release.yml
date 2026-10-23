@@ -58,23 +58,3 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: npx semantic-release
-
-      - name: Remove superseded version releases and tags
-        if: steps.release.outputs.version != ''
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CURRENT_TAG: v${{ steps.release.outputs.version }}
-        run: |
-          while IFS= read -r old_tag; do
-            if [[ -n "$old_tag" && "$old_tag" != "$CURRENT_TAG" ]]; then
-              gh release delete "$old_tag" --cleanup-tag --yes
-            fi
-          done < <(gh release list --limit 100 --json tagName --jq '.[].tagName')
-
-          git fetch --tags --force
-          while IFS= read -r old_tag; do
-            if [[ "$old_tag" =~ ^v[0-9] && "$old_tag" != "$CURRENT_TAG" ]]; then
-              git push origin --delete "$old_tag"
-            fi
-          done < <(git tag --list)

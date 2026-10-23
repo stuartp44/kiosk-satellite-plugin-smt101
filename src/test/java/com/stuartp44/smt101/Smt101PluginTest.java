@@ -285,6 +285,24 @@ class Smt101PluginTest {
     }
 
     @Test
+    void turnsRgbOffThroughTheUnsubscribedStatusOwner() throws Exception {
+        try (Socket client = startLocalBrokerClient(false)) {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            DataOutputStream body = new DataOutputStream(bytes);
+            body.writeUTF("office/light/status");
+            body.write("{\"state\":\"ON\"}".getBytes(StandardCharsets.UTF_8));
+            DataOutputStream out = new DataOutputStream(client.getOutputStream());
+            out.writeByte(0x30);
+            out.writeByte(bytes.size());
+            out.write(bytes.toByteArray());
+            out.flush();
+            assertOffCommand(client);
+            assertTrue(host.commandSent.await(2, TimeUnit.SECONDS));
+            assertEquals(1, host.logsContaining("matching status publisher").size());
+        }
+    }
+
+    @Test
     void turnsOnRgbOffOnceAfterTheFirstValidPowerStatus() throws Exception {
         try (Socket client = startLocalBrokerClient()) {
             DataInputStream in = new DataInputStream(client.getInputStream());
@@ -397,15 +415,23 @@ class Smt101PluginTest {
     }
 
     private Socket startLocalBrokerClient() throws Exception {
+        return startLocalBrokerClient(true);
+    }
+
+    private Socket startLocalBrokerClient(boolean subscribe) throws Exception {
         plugin.stop();
         host = new FakeHost();
         plugin = new Smt101Plugin(() -> now.get(), new Smt101MqttRecovery(), 0);
         plugin.start(host, Collections.<String, Object>emptyMap());
         assertTrue(host.brokerStarted.await(2, TimeUnit.SECONDS));
-        return connectLocalBrokerClient();
+        return connectLocalBrokerClient(subscribe);
     }
 
     private Socket connectLocalBrokerClient() throws Exception {
+        return connectLocalBrokerClient(true);
+    }
+
+    private Socket connectLocalBrokerClient(boolean subscribe) throws Exception {
         Socket client = new Socket("127.0.0.1", host.brokerPort);
         client.setSoTimeout(2000);
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
@@ -422,6 +448,22 @@ class Smt101PluginTest {
         out.flush();
         assertEquals(0x20020000, new DataInputStream(client.getInputStream()).readInt());
         assertTrue(host.clientConnected.await(2, TimeUnit.SECONDS));
+        if (!subscribe) {
+            return client;
+        }
+        bytes.reset();
+        body.writeShort(1);
+        body.writeUTF("office/#");
+        body.writeByte(0);
+        out.writeByte(0x82);
+        out.writeByte(bytes.size());
+        out.write(bytes.toByteArray());
+        out.flush();
+        DataInputStream in = new DataInputStream(client.getInputStream());
+        assertEquals(0x90, in.readUnsignedByte());
+        assertEquals(3, in.readUnsignedByte());
+        assertEquals(1, in.readUnsignedShort());
+        assertEquals(0, in.readUnsignedByte());
         return client;
     }
 
