@@ -49,6 +49,10 @@ Other SMT101-family devices and firmware are not currently confirmed.
 
 ## Installation
 
+Releases are prepared in an automated release PR. Merging that PR creates
+the versioned release; the package becomes available after its build and
+verification finish. See [release workflow details](docs/TECHNICAL.md#automated-ci-and-releases).
+
 1. Use the install button above, or download a plugin ZIP from
    [GitHub Releases](https://github.com/stuartp44/kiosk-satellite-plugin-smt101/releases)
    and install it through Kiosk Satellite's Plugin Manager.

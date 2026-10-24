@@ -467,24 +467,37 @@ and test suite. Each run starts with `clean`, so its `smt101-plugin-dist`
 GitHub Actions artifact contains only the current manifest, installable ZIP,
 and SHA-256 checksum. CI artifacts are retained for 30 days.
 
-Releases are fully automated with
-[semantic-release](https://semantic-release.org). Every push to `main` runs
-`.github/workflows/release.yml`, which reads the
+Releases are prepared through pull requests using
+[release-please](https://github.com/googleapis/release-please). Every push to
+`main` runs `.github/workflows/release.yml`, which reads the
 [Conventional Commits](https://www.conventionalcommits.org) since the last
-`v<version>` tag and decides the next version:
+release and opens or updates a release PR with the next version and changelog.
+Ordinary pushes do not publish a release. Review and merge the release PR to
+create the `v<version>` tag and GitHub Release, then build and upload its assets.
 
 | Commit message                                   | Release         |
 | ------------------------------------------------ | --------------- |
 | `fix: ...`, `perf: ...`                          | patch (0.1.x)   |
 | `feat: ...`                                      | minor (0.x.0)   |
 | `feat!: ...` or a `BREAKING CHANGE:` footer      | major (x.0.0)   |
-| `chore:`, `ci:`, `docs:`, `test:`, other text    | no release      |
+| `refactor:`, `chore:`, `ci:`, `docs:`, `test:`, other text | no release |
 
-When a release is due, `scripts/prepare-release.sh` writes the new version
-into `kiosk-satellite-plugin.json`, runs the same clean build and tests, and
-verifies the ZIP and checksum. semantic-release then commits the manifest back
-to `main` as `chore(release): <version> [skip ci]`, tags `v<version>`, and
-creates the GitHub Release with generated notes. Older releases, their
+The release PR updates `CHANGELOG.md`, `version.txt`,
+`.release-please-manifest.json`, and the version in `kiosk-satellite-plugin.json`.
+The automation starts from v0.4.0 and its release commit; it does not re-release
+the earlier semantic-release history. Before 1.0, features bump the minor
+version and breaking changes also bump the minor version.
+
+On merge, the publish job checks out the exact release tag.
+`scripts/prepare-release.sh` verifies that all version files agree, runs the
+clean build and tests using Android platform 35, and verifies the ZIP,
+checksum, and packaged manifest. Only after verification are the assets
+uploaded. The script no longer changes source versions.
+The GitHub Release exists before asset verification finishes; a failed publish
+job therefore leaves a release without complete assets. Re-run the failed
+publish job (not just the whole workflow) after resolving the failure to upload
+the same tagged version; uploads replace existing assets for that tag.
+Older releases, their
 assets, and version tags are retained for version-specific references and
 rollback. Releases deleted by earlier versions of the workflow are not
 automatically restored.
@@ -493,6 +506,27 @@ Each release uploads exactly one standalone `kiosk-satellite-plugin.json`
 asset for Plugin Manager discovery, plus the installable ZIP and its
 SHA-256 checksum.
 
-Do not bump the manifest version by hand. When squash-merging pull requests,
-use a Conventional Commit PR title (for example `fix: resend last MQTT values`),
-because that title becomes the commit semantic-release analyzes.
+Do not bump versions by hand. When squash-merging ordinary pull requests, use a
+Conventional Commit PR title (for example `fix: resend last MQTT values`),
+because that title becomes the commit release-please analyzes. A `refactor:`
+squash title will not trigger a release even if the original commits used `feat:`.
+Keep the generated release PR title and release-please labels intact.
+
+### Repository setup
+
+Enable **Allow GitHub Actions to create and approve pull requests** under
+repository Actions settings. The workflow can use `GITHUB_TOKEN` to manage
+release PRs and releases, but GitHub does not trigger ordinary push/PR CI
+workflows for events created using that token.
+
+To run CI automatically on generated release PRs, set the repository Actions
+secret `RELEASE_PLEASE_TOKEN` to a suitable bot token with repository contents,
+pull-request, and issue write access (and organization approval if required).
+The workflow uses it when present, otherwise falls back to `GITHUB_TOKEN`.
+Without it, explicitly run the build workflow on the release PR branch and
+review the result before merging; required PR checks may otherwise remain pending.
+Never store this token in source control.
+
+Dependabot continues to check Gradle dependencies and GitHub Actions weekly.
+The npm release dependencies and semantic-release configuration have been
+removed; Node.js and `npm ci` are no longer required by the release workflow.

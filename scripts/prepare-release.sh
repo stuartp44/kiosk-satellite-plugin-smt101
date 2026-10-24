@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# Called by semantic-release: writes the next version into the manifest,
-# then runs the clean build/tests and verifies the packaged artifacts.
+# Builds the version already reviewed and merged through the release PR.
 set -euo pipefail
 
 version="${1:?usage: prepare-release.sh <version>}"
 manifest="kiosk-satellite-plugin.json"
 zip="dist/smt101-sensors-$version.zip"
 
-tmp="$(mktemp)"
-jq --arg v "$version" '.version = $v' "$manifest" > "$tmp"
-mv "$tmp" "$manifest"
+test "$(jq -er '.version' "$manifest")" = "$version"
+test "$(cat version.txt)" = "$version"
+test "$(jq -er '."."' .release-please-manifest.json)" = "$version"
 
 gradle --no-daemon clean build -PandroidPlatform="${ANDROID_PLATFORM:-35}"
 

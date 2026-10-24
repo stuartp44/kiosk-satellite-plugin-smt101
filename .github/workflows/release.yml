@@ -1,4 +1,4 @@
-name: Publish plugin release
+name: Prepare and publish plugin release
 
 on:
   push:
@@ -16,21 +16,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  release-pr:
     runs-on: ubuntu-24.04
-    # Skip the version-bump commit that semantic-release pushes back to main.
-    if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
     steps:
-      - name: Check out source and tags
+      - name: Prepare release PR or create merged release
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    needs: release-pr
+    if: needs.release-pr.outputs.release_created == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out released source
         uses: actions/checkout@v7
         with:
-          fetch-depth: 0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-          cache: npm
+          ref: ${{ needs.release-pr.outputs.tag_name }}
 
       - name: Set up Java
         uses: actions/setup-java@v6
@@ -42,19 +51,19 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      - name: Verify Android SDK
-        shell: bash
-        run: |
-          sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-          test -n "$sdk_root"
-          test -f "$sdk_root/platforms/android-35/android.jar"
-          find "$sdk_root/build-tools" -type f -name d8 -perm -111 -print -quit | grep -q .
-
-      - name: Install release tooling
-        run: npm ci
-
-      - name: Run semantic-release
-        id: release
+      - name: Build and verify released package
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: npx semantic-release
+          RELEASE_VERSION: ${{ needs.release-pr.outputs.version }}
+        run: bash scripts/prepare-release.sh "$RELEASE_VERSION"
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release-pr.outputs.tag_name }}
+          RELEASE_VERSION: ${{ needs.release-pr.outputs.version }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            dist/kiosk-satellite-plugin.json \
+            "dist/smt101-sensors-$RELEASE_VERSION.zip" \
+            "dist/smt101-sensors-$RELEASE_VERSION.zip.sha256" \
+            --clobber
