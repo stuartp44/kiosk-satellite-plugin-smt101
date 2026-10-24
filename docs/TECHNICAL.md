@@ -20,6 +20,10 @@ after recovery, but physical input changes, switch commands, and RGB
 operation remain unverified. Entities are discovered only when their valid
 status publications arrive.
 
+Subsequent interactive testing confirmed RGB command delivery, but warning
+flashes have shown intermittent instability. Automated effect tests verify
+command sequences and reported state, not physical timing or long-term stability.
+
 On the V2.0 tablet, the patched plugin restarted an enabled but stopped
 publisher through the OEM service on 17 October 2026. Temperature, humidity,
 and distance readings resumed. When testing a local ZIP on a fleet-managed
@@ -38,11 +42,11 @@ topics, payloads, or hardware interfaces and are not currently confirmed.
 | Distance | OEM MQTT publication (on equipped units) | `mm`, distance, measurement, 0 decimals |
 | Switch 1 / Switch 2 | OEM MQTT status and command topics | Relay 1 / Relay 2 outputs |
 | Door 1 / Door 2 | OEM MQTT status publications | Binary sensors with the `door` device class |
-| RGB Backlight | OEM MQTT command and state topics | On/off, brightness, and RGB color |
+| RGB Backlight | Built-in MQTT client command and state topics | On/off, brightness, RGB color, and plugin-generated effects |
 
 The plugin does not inspect `/dev/input`.
 Optional automatic recovery uses the tablet's exported
-`com.broadcastinterface.ApiSystemService` to start a stopped OEM publisher.
+`com.broadcastinterface.ApiSystemService` to start the stopped built-in MQTT client.
 
 ## Automatic OEM publisher recovery
 
@@ -73,7 +77,8 @@ Once a real MQTT publication arrives, the recovery status changes to
 restart confirmation are also recognized, so the confirmation cannot
 overwrite active reception with a stale waiting message.
 
-Running services and disabled tablet MQTT are left unchanged by default.
+Running clients are left unchanged. When automatic re-enabling is disabled,
+disabled tablet MQTT is also left unchanged.
 Enable **Automatically re-enable disabled tablet MQTT** to explicitly allow
 recovery to change `persist.start.mqtt` from `0` to `1`. This option only
 applies while automatic recovery is enabled.
@@ -84,12 +89,17 @@ running service; sensor readings still require actual MQTT publications.
 Re-enabling uses the same five-minute cooldown as restarting.
 Turn this option off before intentionally disabling tablet MQTT.
 
+The manifest defaults both automatic recovery and automatic re-enabling to
+`true`. The configuration parser falls back to `false` if a setting is absent
+or invalid; existing saved settings also affect the effective configuration.
+Check the plugin settings rather than assuming recovery is disabled by default.
+
 Restart attempts
 and failed checks are limited to once every five minutes. Rejected service
 bindings, unexpected service states, unsupported firmware, timeouts, and
 transaction failures are reported in the plugin status and log. Disabling
 recovery or the plugin stops new checks; an already submitted operation may
-finish. The plugin does not stop the OEM publisher when disabled.
+finish. The plugin does not stop the built-in MQTT client when disabled.
 
 The Binder descriptor and transaction number are verified for the two exact
 firmware builds listed under **Known devices**. Other builds remain blocked;
@@ -198,11 +208,12 @@ settings are ignored. For example, a tablet using
 `kitchen/brightness/set`, and `kitchen/rgb/set`, and switch commands to
 `kitchen/switch1/set` and `kitchen/switch2/set`.
 
-The plugin log records the topic filters requested by the OEM MQTT client
-and every outbound RGB or switch command. When a firmware publishes status
+The plugin log records the topic filters requested by the built-in MQTT client
+and manual outbound RGB or switch commands. Routine RGB effect traffic is
+suppressed as described below. When a firmware publishes status
 without subscribing to command topics, the loopback broker sends commands
 only to connected clients that have published valid switch or RGB status
-with the exact matching prefix, and logs that fallback. It retains the latest
+with the exact matching prefix, and logs that fallback for manual commands. It retains the latest
 prefix for each of the five controllable status channels per connection,
 not a history of publications. An explicit matching subscription takes
 precedence. With neither a matching subscriber nor a known status publisher,
@@ -213,7 +224,15 @@ publish status again or subscribe before they can receive commands.
 The broker accepts any MQTT client credentials, but its loopback-only bind
 keeps it inaccessible to other devices.
 
-### Entity state refresh and diagnostics
+### RGB effects
+
+The advertised effect list contains Rainbow, Breathe, Candle, Warning Red,
+Warning Amber, Warning Yellow, Warning Green, Warning Cyan, Warning Blue,
+Warning Magenta, and Warning White. `None` stops the active effect.
+Rainbow cycles hue over 12 seconds; Breathe varies the starting brightness
+between 10% and 100% over four seconds while retaining its starting color.
+Candle uses warm RGB with a varying brightness. Warning colors are fixed;
+all effects use the brightness captured when they start.
 
 RGB effects are scheduled with fixed delay on the single command executor:
 250 ms for Rainbow/Breathe/Candle and 500 ms for warning effects. After completing a
@@ -240,9 +259,26 @@ frames and OEM status echoes update physical state internally without publishing
 entity changes. Manual commands or effect termination resume normal state reporting.
 Cancellation generations reject obsolete commands between MQTT writes.
 Manual light commands, configuration changes, and stop cancel the future;
-executor shutdown releases the task on unload. Live OEM status updates
-preserve the currently selected effect in the published light state.
+executor shutdown releases the task on unload. Stopping leaves the last
+physical state in place; an explicit command chooses a final power/color.
+Effects are not persisted or automatically resumed.
 No transition duration support is claimed.
+
+### Capability discovery and startup timeout
+
+Startup and configuration changes show
+`Detecting device capabilities, please wait.` in the info bar.
+An existing one-second diagnostic task checks for the first MQTT publication.
+At 60 seconds without one, it reports an error asking whether the built-in MQTT
+client settings have been configured, with a link to
+[Tablet MQTT settings](../README.md#tablet-mqtt-settings).
+An MQTT connection alone does not satisfy this check. Any publication does,
+even if it does not contain a recognized capability.
+The timeout is reported once per configuration, independently of automatic
+recovery. Informational statuses, including recovery progress, cannot replace
+the timeout error; other errors can. The first publication clears the timeout
+flag and reports reception, and valid readings then update the capability list.
+Reconfiguration resets the wait; stop disarms it.
 
 Capability discovery posts an informational plugin status and log entry only
 when a new supported feature sends a valid reading/status. A fixed set of
@@ -251,6 +287,8 @@ sensors, two switches, two doors, and RGB light). Invalid/unknown messages
 do not detect features, repeated readings do not repeat announcements, and
 the set is cleared on settings changes and stop. Operational status messages
 can subsequently replace the discovery message.
+
+### Entity state refresh and diagnostics
 
 The `last_mqtt_message` Remote Admin status tile reports the embedded broker's
 current client count in its state line on connect/disconnect and the existing 60-second refresh.
@@ -277,7 +315,7 @@ full payload or a message history. During traffic it publishes at most once
 per clock second, with the latest pending preview also sent by the existing
 60-second refresh. Both tiles reset together. A single one-second task on
 the existing plugin executor flushes pending payload previews and checks
-freshness, publishing only when the preview or indicator changes. The task
+freshness and the startup timeout, publishing only when the preview or indicator changes. The task
 is shut down with the executor on stop and does not publish after stop.
 With automatic MQTT recovery enabled in local mode, the payload indicator
 is green for an inbound publication less than 60
@@ -320,8 +358,18 @@ means Kiosk has ended the plugin session, the plugin logs
 `Kiosk ended this plugin session` and stops its broker so the next session
 can bind port 1883.
 
-Switch and RGB backlight commands are sent from a dedicated plugin thread,
-so a stalled MQTT write cannot trip Kiosk's plugin callback timeout.
+Switch commands, manual RGB commands, and effect frames share one scheduled
+command worker. MQTT input is processed independently on one thread per
+connected client, while configuration, periodic refresh, and diagnostics use
+a separate plugin worker. Recovery has its own worker and timeout watchdog.
+Shared state is coordinated with locks; host calls during message processing
+can still delay reading subsequent packets.
+
+Fixed-delay effect scheduling prevents frame backlog, but a stalled socket
+write can delay manual commands on the shared command worker. The MQTT socket
+read timeout does not bound writes. Moving writes off the host callback thread
+avoids doing socket I/O directly in Kiosk's event callback; it does not guarantee
+that all callbacks remain non-blocking or that inbound traffic cannot back up.
 
 ## Serial and IR observations
 
@@ -445,9 +493,16 @@ enabled.
 
 ## Build and test
 
+Plugin and SDK sources target Java 8 bytecode for Android compatibility.
+Tests target Java 17 to support JUnit 6 and run on the Java 17 toolchain;
+test classes are not included in the plugin package.
+This test-only target change accompanies the JUnit 6 dependency update.
+The published v0.4.0 source still uses JUnit 5 and targets tests at Java 8;
+the plugin/SDK Java 8 target is unchanged in both configurations.
+
 Requirements:
 
-- JDK 17 or newer
+- JDK 17 toolchain available (the build explicitly selects Java 17)
 - Gradle 9 or newer
 - Android SDK with an installed platform and build-tools containing `d8`
 - `ANDROID_HOME` or `ANDROID_SDK_ROOT`
@@ -459,10 +514,16 @@ gradle clean build
 ```
 
 The installable ZIP and SHA-256 checksum are generated in `dist/`.
+The `androidPlatform` Gradle property selects a platform; without it the build
+uses the highest installed platform. CI and the release script explicitly select API 35:
+
+```bash
+gradle --no-daemon clean build -PandroidPlatform=35
+```
 
 ## Automated CI and releases
 
-Pushes, pull requests, and manual workflow runs execute the complete build
+Pushes to `main`, pull requests, and manual build workflow runs execute the complete build
 and test suite. Each run starts with `clean`, so its `smt101-plugin-dist`
 GitHub Actions artifact contains only the current manifest, installable ZIP,
 and SHA-256 checksum. CI artifacts are retained for 30 days.
