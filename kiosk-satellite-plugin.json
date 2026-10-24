@@ -7,7 +7,7 @@
   "minAndroidSdk": 24,
   "entryClass": "com.stuartp44.smt101.Smt101Plugin",
   "icon": "icon.png",
-  "description": "Two modes for SMT101x tablets: recover the OEM publisher using your existing external MQTT settings, or manage sensors, switches, doors, and RGB backlight through Kiosk Satellite using the built-in local broker, with no separate MQTT server required.",
+  "description": "Bring your SMT101 tablet's built-in sensors and controls into Kiosk Satellite. See temperature, humidity, and distance readings, check door inputs, and control relays and RGB lighting on supported models. Everything can run locally on the tablet, without a separate MQTT server. The plugin can also restart the tablet's built-in MQTT service if it stops, whether you use Kiosk Satellite or your own MQTT server.",
   "author": "Stuart Pearson",
   "license": "Apache-2.0",
   "capabilities": [
