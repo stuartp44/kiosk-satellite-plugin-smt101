@@ -63,6 +63,7 @@ tasks.named<JavaCompile>("compileJava") {
 }
 
 tasks.named<JavaCompile>("compileTestJava") {
+    options.release.set(17)
     dependsOn(tasks.named(sdk.compileJavaTaskName))
     classpath += sdk.output
 }
