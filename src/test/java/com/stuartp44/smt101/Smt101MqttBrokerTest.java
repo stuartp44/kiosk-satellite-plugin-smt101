@@ -187,6 +187,7 @@ class Smt101MqttBrokerTest {
         try (Socket socket = new Socket("127.0.0.1", port.get())) {
             DataOutputStream out = new DataOutputStream(socket.getOutputStream());
             DataInputStream in = new DataInputStream(socket.getInputStream());
+            socket.setSoTimeout(2000);
             writeConnectV5(out, "oem-v5");
             assertEquals(0x20, in.readUnsignedByte());
             assertEquals(3, in.readUnsignedByte());
@@ -195,6 +196,18 @@ class Smt101MqttBrokerTest {
             writePublishV5(out, "panel/temperature", "23.5");
             assertTrue(published.await(2, TimeUnit.SECONDS));
             assertEquals("23.5", payload.get());
+            writePublishV5(out, "panel/light/status", "{\"state\":\"OFF\"}");
+            assertNoQueuedCommand(out, in);
+            assertEquals(Smt101MqttBroker.PublishResult.STATUS_OWNER,
+                    broker.publish("panel/light/switch", "ON"));
+            Packet command = readPacket(in);
+            assertEquals(0x30, command.header);
+            assertEquals("panel/light/switch", new DataInputStream(
+                    new java.io.ByteArrayInputStream(command.body)).readUTF());
+            int topicLength = "panel/light/switch".length();
+            assertEquals(0, command.body[2 + topicLength]);
+            assertEquals("ON", new String(command.body, 3 + topicLength,
+                    command.body.length - 3 - topicLength, StandardCharsets.UTF_8));
         } finally {
             broker.stop();
             thread.join(2000);
@@ -259,10 +272,41 @@ class Smt101MqttBrokerTest {
             assertTrue(connected.await(2, TimeUnit.SECONDS));
 
             assertEquals(
-                    Smt101MqttBroker.PublishResult.CONNECTED_FALLBACK,
+                    Smt101MqttBroker.PublishResult.NO_CLIENT,
                     broker.publish("office/switch1/set", "{\"state\":\"ON\"}"));
-            assertEquals(0x30, readPacket(publisherIn).header);
+            assertNoQueuedCommand(publisherOut, publisherIn);
+            assertNoQueuedCommand(out, in);
+            writePublish(out, "kitchen/switch2/status", "{\"state\":\"OFF\"}", 8);
+            assertEquals(0x40, readPacket(in).header);
+            assertEquals(Smt101MqttBroker.PublishResult.STATUS_OWNER,
+                    broker.publish("kitchen/switch2/set", "ON"));
             assertEquals(0x30, readPacket(in).header);
+            assertNoQueuedCommand(publisherOut, publisherIn);
+
+            writePublish(publisherOut, "office/switch1/status", "{\"state\":\"unknown\"}", 1);
+            assertEquals(0x40, readPacket(publisherIn).header);
+            assertEquals(Smt101MqttBroker.PublishResult.NO_CLIENT,
+                    broker.publish("office/switch1/set", "ON"));
+
+            String[] statusTopics = {"switch1", "switch2", "light", "brightness", "rgb"};
+            String[] statusPayloads = {
+                    "{\"state\":\"OFF\"}", "{\"state\":\"OFF\"}", "{\"state\":\"OFF\"}",
+                    "{\"brightness\":20}", "{\"rgb\":[255,255,255]}"};
+            String[] commandTopics = {"switch1/set", "switch2/set", "light/switch", "brightness/set", "rgb/set"};
+            for (int i = 0; i < statusTopics.length; i++) {
+                writePublish(publisherOut, "office/" + statusTopics[i] + "/status", statusPayloads[i], 2 + i);
+                assertEquals(0x40, readPacket(publisherIn).header);
+                assertEquals(Smt101MqttBroker.PublishResult.STATUS_OWNER,
+                        broker.publish("office/" + commandTopics[i], "test-command"));
+                assertEquals(0x30, readPacket(publisherIn).header);
+                assertNoQueuedCommand(out, in);
+            }
+            assertEquals(Smt101MqttBroker.PublishResult.NO_CLIENT,
+                    broker.publish("office/nested/switch1/set", "ON"));
+            assertEquals(Smt101MqttBroker.PublishResult.NO_CLIENT,
+                    broker.publish("Office/switch1/set", "ON"));
+            assertNoQueuedCommand(publisherOut, publisherIn);
+            assertNoQueuedCommand(out, in);
             writeSubscribe(out, "office/+/set", 9);
             Packet subAck = readPacket(in);
             assertEquals(0x90, subAck.header);
@@ -285,10 +329,98 @@ class Smt101MqttBrokerTest {
                             2 + topicLength,
                             publish.body.length - 2 - topicLength,
                             StandardCharsets.UTF_8));
+            assertNoQueuedCommand(publisherOut, publisherIn);
         } finally {
             broker.stop();
             thread.join(2000);
         }
+    }
+
+    @Test
+    void forgetsStatusOwnershipAfterDisconnectAndStop() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        AtomicInteger port = new AtomicInteger();
+        java.util.concurrent.BlockingQueue<String> disconnected =
+                new java.util.concurrent.LinkedBlockingQueue<String>();
+        AtomicReference<Throwable> failure = new AtomicReference<Throwable>();
+        Smt101MqttBroker broker = new Smt101MqttBroker(0, new Smt101MqttBroker.Listener() {
+            @Override
+            public void onStarted(int actualPort) {
+                port.set(actualPort);
+                started.countDown();
+            }
+
+            @Override
+            public void onClientConnected(String clientId, int protocolLevel, boolean hasUsername) {
+            }
+
+            @Override
+            public void onClientSubscribed(java.util.List<String> topicFilters) {
+            }
+
+            @Override
+            public void onMessage(String topic, String payload) {
+            }
+
+            @Override
+            public void onError(String message) {
+                failure.set(new AssertionError(message));
+            }
+
+            @Override
+            public void onClientDisconnected(String clientId, String reason, long connectedMillis) {
+                disconnected.add(clientId);
+            }
+        });
+        Thread thread = new Thread(() -> {
+            try {
+                broker.run();
+            } catch (Throwable exception) {
+                failure.set(exception);
+            }
+        });
+        thread.start();
+        try {
+            assertTrue(started.await(2, TimeUnit.SECONDS));
+            for (int session = 0; session < 20; session++) {
+                try (Socket client = new Socket("127.0.0.1", port.get())) {
+                    client.setSoTimeout(2000);
+                    DataOutputStream out = new DataOutputStream(client.getOutputStream());
+                    DataInputStream in = new DataInputStream(client.getInputStream());
+                    writeConnect(out, "reconnecting-oem");
+                    assertEquals(0x20, readPacket(in).header);
+                    assertNoQueuedCommand(out, in);
+                    assertEquals(Smt101MqttBroker.PublishResult.NO_CLIENT,
+                            broker.publish("office/switch1/set", "ON"));
+                    for (int update = 0; update < 10; update++) {
+                        String prefix = update == 9 ? "office" : "old-" + update;
+                        writePublish(out, prefix + "/switch1/status", "{\"state\":\"OFF\"}", update + 1);
+                        assertEquals(0x40, readPacket(in).header);
+                    }
+                    assertEquals(Smt101MqttBroker.PublishResult.NO_CLIENT,
+                            broker.publish("old-0/switch1/set", "ON"));
+                    assertEquals(Smt101MqttBroker.PublishResult.STATUS_OWNER,
+                            broker.publish("office/switch1/set", "ON"));
+                    assertEquals(0x30, readPacket(in).header);
+                    if (session == 19) {
+                        broker.stop();
+                    } else if (session % 2 == 0) {
+                        client.shutdownOutput();
+                    } else {
+                        writePacket(out, 0xE0, new byte[0]);
+                    }
+                    assertEquals("reconnecting-oem", disconnected.poll(2, TimeUnit.SECONDS));
+                    assertEquals(0, broker.connectedClientCount());
+                    assertEquals(Smt101MqttBroker.PublishResult.NO_CLIENT,
+                            broker.publish("office/switch1/set", "ON"));
+                }
+            }
+        } finally {
+            broker.stop();
+            thread.join(2000);
+        }
+        assertTrue(!thread.isAlive());
+        assertNull(failure.get());
     }
 
     @Test
@@ -450,6 +582,11 @@ class Smt101MqttBrokerTest {
         byte[] body = new byte[remaining];
         in.readFully(body);
         return new Packet(header, body);
+    }
+
+    private static void assertNoQueuedCommand(DataOutputStream out, DataInputStream in) throws Exception {
+        writePacket(out, 0xC0, new byte[0]);
+        assertEquals(0xD0, readPacket(in).header);
     }
 
     private static void writeConnectV5(DataOutputStream out, String clientId) throws Exception {

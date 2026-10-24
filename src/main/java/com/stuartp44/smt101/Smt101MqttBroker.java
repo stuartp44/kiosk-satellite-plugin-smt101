@@ -43,7 +43,7 @@ final class Smt101MqttBroker {
 
     enum PublishResult {
         SUBSCRIBED,
-        CONNECTED_FALLBACK,
+        STATUS_OWNER,
         NO_CLIENT
     }
 
@@ -156,7 +156,7 @@ final class Smt101MqttBroker {
         synchronized (out) {
             writeConnAck(out, info.protocolLevel);
         }
-        ClientConnection connection = new ClientConnection(client, out, info.protocolLevel);
+        ClientConnection connection = new ClientConnection(client, out, info.protocolLevel, info.clientId);
         clients.add(connection);
         long connectedAt = System.currentTimeMillis();
         String reason = "broker stopped";
@@ -173,7 +173,7 @@ final class Smt101MqttBroker {
                 }
                 switch (packetType(packet.header)) {
                     case 3:
-                        handlePublish(out, packet, info.protocolLevel);
+                        handlePublish(connection, packet);
                         break;
                     case 8:
                         List<String> subscriptions = parseSubscriptions(packet, info.protocolLevel);
@@ -223,6 +223,16 @@ final class Smt101MqttBroker {
         return clients.size();
     }
 
+    List<String> connectedClientIds() {
+        List<String> ids = new ArrayList<String>();
+        synchronized (clients) {
+            for (ClientConnection client : clients) {
+                ids.add(client.clientId);
+            }
+        }
+        return ids;
+    }
+
     PublishResult publish(String topic, String payload) {
         if (topic == null || payload == null) {
             return PublishResult.NO_CLIENT;
@@ -240,8 +250,9 @@ final class Smt101MqttBroker {
         }
         boolean delivered = false;
         for (ClientConnection client : snapshot) {
-            if (!hasMatchingSubscription
-                    || matchesAnySubscription(topic, client.subscriptions)) {
+            if (hasMatchingSubscription
+                    ? matchesAnySubscription(topic, client.subscriptions)
+                    : client.ownsCommandTopic(topic)) {
                 delivered |= publishToClient(client, topic, payload);
             }
         }
@@ -250,7 +261,7 @@ final class Smt101MqttBroker {
         }
         return hasMatchingSubscription
                 ? PublishResult.SUBSCRIBED
-                : PublishResult.CONNECTED_FALLBACK;
+                : PublishResult.STATUS_OWNER;
     }
 
     private boolean publishToClient(ClientConnection client, String topic, String payload) {
@@ -277,7 +288,9 @@ final class Smt101MqttBroker {
         }
     }
 
-    private void handlePublish(DataOutputStream out, Packet packet, int protocolLevel) throws IOException {
+    private void handlePublish(ClientConnection connection, Packet packet) throws IOException {
+        DataOutputStream out = connection.output;
+        int protocolLevel = connection.protocolLevel;
         byte[] body = packet.body;
         if (body.length < 2) {
             throw new IOException("malformed PUBLISH packet");
@@ -305,6 +318,7 @@ final class Smt101MqttBroker {
             }
         }
         String payload = new String(body, cursor, body.length - cursor, StandardCharsets.UTF_8);
+        connection.recordStatusPrefix(topic, payload);
         if (qos == 1) {
             synchronized (out) {
                 writePacket(out, 0x40, shortBytes(packetId));
@@ -641,12 +655,41 @@ final class Smt101MqttBroker {
     }
 
     private static final class ClientConnection {
+        final String clientId;
         final Socket socket;
         final DataOutputStream output;
         final int protocolLevel;
         volatile List<String> subscriptions = Collections.emptyList();
+        private final String[] statusPrefixes = new String[2 + Smt101RgbLight.StatusType.values().length];
 
-        ClientConnection(Socket socket, DataOutputStream output, int protocolLevel) {
+        synchronized void recordStatusPrefix(String topic, String payload) {
+            Smt101BinaryStatus.Input input = Smt101BinaryStatus.match(topic);
+            if (input != null && input.writable && Smt101BinaryStatus.parseState(payload) != null) {
+                statusPrefixes["switch1".equals(input.key) ? 0 : 1] = input.topicPrefix;
+            }
+            Smt101RgbLight.StatusTopic rgb = Smt101RgbLight.matchStatusTopic(topic);
+            if (rgb != null && Smt101RgbLight.applyStatus(null, rgb.type, payload) != null) {
+                statusPrefixes[2 + rgb.type.ordinal()] = rgb.prefix;
+            }
+        }
+
+        synchronized boolean ownsCommandTopic(String topic) {
+            int lastSlash = topic.lastIndexOf('/');
+            int prefixEnd = lastSlash < 0 ? -1 : topic.lastIndexOf('/', lastSlash - 1);
+            if (prefixEnd <= 0) {
+                return false;
+            }
+            String prefix = topic.substring(0, prefixEnd);
+            for (String ownedPrefix : statusPrefixes) {
+                if (prefix.equals(ownedPrefix)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        ClientConnection(Socket socket, DataOutputStream output, int protocolLevel, String clientId) {
+            this.clientId = clientId;
             this.socket = socket;
             this.output = output;
             this.protocolLevel = protocolLevel;

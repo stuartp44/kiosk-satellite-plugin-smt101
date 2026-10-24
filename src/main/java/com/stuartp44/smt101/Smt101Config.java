@@ -3,45 +3,26 @@ package com.stuartp44.smt101;
 import java.util.Map;
 
 final class Smt101Config {
-    private static final boolean DEFAULT_ENABLE_EMBEDDED_MQTT_BROKER = true;
-
-    private final boolean embeddedMqttBrokerEnabled;
     private final boolean automaticMqttRecoveryEnabled;
     private final boolean reenableMqttEnabled;
-    private final String mqttTopicPrefix;
-    private final boolean mqttTopicPrefixValid;
 
     private Smt101Config(
-            boolean embeddedMqttBrokerEnabled,
             boolean automaticMqttRecoveryEnabled,
-            boolean reenableMqttEnabled,
-            String mqttTopicPrefix,
-            boolean mqttTopicPrefixValid) {
-        this.embeddedMqttBrokerEnabled = embeddedMqttBrokerEnabled;
+            boolean reenableMqttEnabled) {
         this.automaticMqttRecoveryEnabled = automaticMqttRecoveryEnabled;
         this.reenableMqttEnabled = reenableMqttEnabled;
-        this.mqttTopicPrefix = mqttTopicPrefix;
-        this.mqttTopicPrefixValid = mqttTopicPrefixValid;
     }
 
     static Smt101Config fromSettings(Map<String, Object> settings) {
-        String configuredPrefix = getString(settings, "mqttClientId");
-        String normalizedPrefix = normalizeTopicPrefix(configuredPrefix);
         return new Smt101Config(
-                getBoolean(settings, "enableEmbeddedMqttBroker", DEFAULT_ENABLE_EMBEDDED_MQTT_BROKER),
                 getBoolean(settings, "enableAutomaticMqttRecovery", false),
-                getBoolean(settings, "reenableDisabledMqtt", false),
-                normalizedPrefix,
-                configuredPrefix.isEmpty() || normalizedPrefix != null);
+                getBoolean(settings, "reenableDisabledMqtt", false));
     }
 
     Smt101ResolvedConfig resolve() {
         return new Smt101ResolvedConfig(
-                embeddedMqttBrokerEnabled,
                 automaticMqttRecoveryEnabled,
-                reenableMqttEnabled,
-                mqttTopicPrefix,
-                mqttTopicPrefixValid);
+                reenableMqttEnabled);
     }
 
     private static boolean getBoolean(Map<String, Object> settings, String key, boolean fallback) {
@@ -64,29 +45,4 @@ final class Smt101Config {
         return fallback;
     }
 
-    private static String getString(Map<String, Object> settings, String key) {
-        if (settings == null) {
-            return "";
-        }
-        Object value = settings.get(key);
-        return value instanceof String ? ((String) value).trim() : "";
-    }
-
-    static String normalizeTopicPrefix(String value) {
-        String normalized = value == null ? "" : value.trim();
-        while (normalized.startsWith("/")) {
-            normalized = normalized.substring(1);
-        }
-        while (normalized.endsWith("/")) {
-            normalized = normalized.substring(0, normalized.length() - 1);
-        }
-        if (normalized.isEmpty()) {
-            return null;
-        }
-        return normalized.indexOf('\u0000') >= 0
-                        || normalized.indexOf('+') >= 0
-                        || normalized.indexOf('#') >= 0
-                ? null
-                : normalized;
-    }
 }

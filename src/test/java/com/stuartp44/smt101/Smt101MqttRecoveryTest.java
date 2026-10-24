@@ -138,7 +138,7 @@ class Smt101MqttRecoveryTest {
         recovery.check(host, 61_000L);
         assertTrue(backend.reenable);
         backend.complete(Smt101MqttRecovery.Result.REENABLED);
-        assertTrue(logs.get(0).contains("re-enabled disabled tablet MQTT"));
+        assertTrue(logs.get(0).contains("re-enabled the disabled built-in MQTT client"));
         recovery.check(host, 360_999L);
         assertEquals(2, backend.requests);
         recovery.check(host, 361_000L);

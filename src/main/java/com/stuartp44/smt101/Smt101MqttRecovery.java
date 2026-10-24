@@ -18,6 +18,16 @@ final class Smt101MqttRecovery {
         void stop();
     }
 
+    interface StatusReporter {
+        void status(String message, boolean error);
+    }
+
+    private StatusReporter statusReporter;
+
+    synchronized void setStatusReporter(StatusReporter reporter) {
+        statusReporter = reporter;
+    }
+
     private Backend backend;
     private boolean enabled;
     private boolean reenableDisabledMqtt;
@@ -101,7 +111,7 @@ final class Smt101MqttRecovery {
         if (result == Result.REENABLED || result == Result.RESTARTED) {
             waitingForPublications = localMqttMode && publicationCount == publicationsAtRequest;
             String action = result == Result.REENABLED
-                    ? "re-enabled disabled tablet MQTT" : "started the stopped OEM publisher";
+                    ? "re-enabled the disabled built-in MQTT client" : "started the stopped built-in MQTT client";
             report(host, "Automatic MQTT recovery " + action + " through the OEM service; "
                     + (!localMqttMode ? "publisher is running with the tablet's configured MQTT connection settings; external broker delivery is not monitored."
                             : waitingForPublications ? "waiting for MQTT publications."
@@ -150,10 +160,14 @@ final class Smt101MqttRecovery {
         }
     }
 
-    private static void report(PluginHost host, String message, boolean error) {
+    private void report(PluginHost host, String message, boolean error) {
         try {
             host.log(message);
-            host.status(message, error);
+            if (statusReporter == null) {
+                host.status(message, error);
+            } else {
+                statusReporter.status(message, error);
+            }
         } catch (RuntimeException exception) {
             System.err.println("smt101-sensors: " + message
                     + " (could not report recovery status: " + exception + ")");

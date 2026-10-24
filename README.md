@@ -2,97 +2,70 @@
 
 [![Install in Kiosk Satellite](https://kiosksatellite.com/img/badges/plugin-add.svg)](https://kiosksatellite.com/redirect/plugin/?repository=stuartp44/kiosk-satellite-plugin-smt101)
 
-This SDK 1 Kiosk Satellite plugin exposes the tablet's temperature,
-humidity, distance (on equipped units), switch/door inputs, and RGB backlight
-as Kiosk Satellite entities.
+Bring your SMT101 tablet's built-in sensors and controls into Kiosk Satellite.
+See temperature, humidity, and distance readings, check door inputs, and
+control the relays and RGB lighting on supported models.
 
-## Disclaimer
+Everything can run locally on the tablet, without a separate MQTT server.
+The plugin can also help keep the tablet's built-in MQTT client running,
+so readings can resume after that client stops.
 
-This plugin is provided "as is" and without warranties of any kind, to the
-maximum extent permitted by applicable law. Use it at your own risk. You are
-responsible for deciding whether it is suitable for your device and setup,
-reviewing its settings, and testing its behavior. The plugin can interact
-with device MQTT services and controls; do not rely on it for safety-critical
-or other essential functions. To the maximum extent permitted by applicable
-law, the author is not liable for damages or losses arising from use of the
-plugin. Your statutory rights are not affected. See the Apache-2.0 `LICENSE`
-for the full warranty disclaimer and limitation of liability.
+For firmware identifiers, MQTT topics and payloads, implementation details,
+serial/IR investigation results, and build instructions, see
+[Technical details](docs/TECHNICAL.md).
 
-## Known devices
+## What the plugin does
 
-| Firmware/build | Identification | Verification |
-| --- | --- | --- |
-| `ZX-SMT1019-R157-V1.0A-10.1-GG-K1.29U-20260707` | SMT1019-R157 V1.0A | Original confirmed hardware, including automatic OEM MQTT recovery |
-| `ZX-SMT1019-R157-V2.0-10.1-GG-K2.15U-20260916` | SMT1019-R157 V2.0; Android model `rk3576_u`, product/device `WF2489T`, manufacturer `Electron`, brand `Apolosign`; Android 14 / API 34 | Identified through ADB on 13 October 2026; automatic OEM MQTT recovery and resumed sensor publications verified on 17 October 2026 |
+| Entity | Feature |
+| --- | --- |
+| Temperature | Temperature reading in degrees Celsius |
+| Humidity | Relative humidity reading in percent |
+| Distance | Distance reading in millimetres, on equipped units |
+| Switch 1 / Switch 2 | Control the tablet's Relay 1 / Relay 2 outputs |
+| Door 1 / Door 2 | Door input states |
+| RGB Backlight | On/off, brightness, and RGB color controls |
 
-The V2.0 unit uses the same observed sensor MQTT format. Inspection on
-17 October 2026 confirmed the same OEM recovery Binder protocol and MQTT
-init-service start trigger, so both exact builds above are allowlisted for
-automatic recovery. RGB, switch, and door support on this variant is not
-fully hardware-tested; switch and door status publications were observed
-after recovery, but physical input changes, switch commands, and RGB
-operation remain unverified. Entities are discovered only when their valid
-status publications arrive.
+Entities appear only after the tablet publishes a valid reading or status
+for that feature. Not every tablet has or publishes every feature.
+The display backlight is separate from the RGB light and is not controlled
+by this plugin.
 
-On the V2.0 tablet, the patched plugin restarted an enabled but stopped
-publisher through the OEM service on 17 October 2026. Temperature, humidity,
-and distance readings resumed. When testing a local ZIP on a fleet-managed
-tablet, disable plugin synchronization first; otherwise the leader can
-replace the local build with its configured release.
+The plugin always hosts its local MQTT broker and can optionally restart a
+stopped built-in MQTT client. External-only recovery mode is no longer available.
 
-Other SMT101-family devices or firmware versions may use different MQTT
-topics, payloads, or hardware interfaces and are not currently confirmed.
+**Serial ports (RS232/RS485) and IR are not exposed by the current plugin.**
+Investigation notes describe possible future work, not available features.
 
-## Sensor sources
+## Compatibility
 
-| Entity | Source | Metadata |
-| --- | --- | --- |
-| Temperature | OEM MQTT publication | `°C`, temperature, measurement, 1 decimal |
-| Humidity | OEM MQTT publication | `%`, humidity, measurement, 0 decimals |
-| Distance | OEM MQTT publication (on equipped units) | `mm`, distance, measurement, 0 decimals |
-| Switch 1 / Switch 2 | OEM MQTT status and command topics | Writable switches |
-| Door 1 / Door 2 | OEM MQTT status publications | Binary sensors with the `door` device class |
-| RGB Backlight | OEM MQTT command and state topics | On/off, brightness, and RGB color |
+The plugin has been checked on SMT1019-R157 V1.0A and V2.0 firmware.
+Automatic recovery is restricted to the two exact builds listed in
+[Known devices](docs/TECHNICAL.md#known-devices).
 
-The plugin does not inspect `/dev/input`.
-Optional automatic recovery uses the tablet's exported
-`com.broadcastinterface.ApiSystemService` to start a stopped OEM publisher.
+On V2.0, temperature, humidity, distance, and publisher recovery have been
+verified. Switch and door status publications have been observed, but
+physical input changes, relay commands, and RGB operation remain unverified.
+Other SMT101-family devices and firmware are not currently confirmed.
 
-## Configuration
+## Installation
 
-| Setting | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `enableEmbeddedMqttBroker` | boolean | `true` | Hosts the MQTT capture broker used to receive OEM sensor publications. |
-| `mqttClientId` | string | blank | Must match `client_id` in the tablet's MQTT settings, such as `office`. Blank enables automatic discovery. |
-| `enableAutomaticMqttRecovery` | boolean | `false` | Opt-in recovery of the stopped OEM MQTT publisher through the OEM system service. |
-| `reenableDisabledMqtt` | boolean | `false` | Allows enabled recovery to override the tablet's MQTT disable setting in either mode. |
+1. Use the install button above, or download a plugin ZIP from
+   [GitHub Releases](https://github.com/stuartp44/kiosk-satellite-plugin-smt101/releases)
+   and install it through Kiosk Satellite's Plugin Manager.
+2. Configure the tablet and plugin as described below.
+3. Confirm that real sensor readings appear in Kiosk Satellite
+   and that the plugin log reports an MQTT client connection and publications.
 
-## Operating modes
+When testing a local ZIP on a fleet-managed tablet, disable plugin
+synchronization first; otherwise the leader can replace it with the
+configured release.
 
-### External MQTT recovery
+## Setup
 
-Turn **Host MQTT capture broker on this tablet** off and enable
-**Automatically recover stopped OEM MQTT publisher**. Keep the server
-address, port, credentials, and client ID already configured in
-**Android Settings > System > MQTT**.
-
-The plugin checks the OEM process once per minute and starts it if stopped.
-This can recover crashes triggered by Wi-Fi interruptions or updates that
-stop the publisher, once the configured server is reachable again.
-It does not restart a running but disconnected process, confirm external
-broker delivery, or repair Wi-Fi, authentication, or server failures.
-The OEM client remains responsible for its own reconnect behavior.
-External readings and commands continue through your existing MQTT setup;
-they are not bridged into Kiosk Satellite by this plugin in this mode.
-
-### Local sensor management through Kiosk Satellite
-
-Turn **Host MQTT capture broker on this tablet** on and configure the tablet's
+The local broker starts automatically. Configure the tablet's
 MQTT server as `127.0.0.1`, port `1883`. The plugin receives sensor and door
 readings and exposes switch and RGB controls through Kiosk Satellite.
-No separate MQTT server is required: MQTT still runs internally between
-the OEM publisher and the plugin's built-in loopback broker.
-Enable automatic recovery to restart a stopped publisher in this mode too.
+MQTT runs internally on the tablet; no separate MQTT server is required.
 
 #### Tablet MQTT settings
 
@@ -102,20 +75,18 @@ again opens the **Set Mqtt** configuration dialog. This briefly interrupts
 sensor publications. If automatic re-enabling is enabled, turn that plugin
 option off temporarily so recovery does not interfere with configuration.
 
-Use these values for the built-in local broker:
-
 | Field | Value |
 | --- | --- |
 | host | `127.0.0.1` |
 | port | `1883` |
 | username | Leave blank |
 | password | Leave blank |
-| client_id | `office` in this example; keep your tablet's client ID |
+| client_id | Keep your tablet's client ID, such as `office` |
 | keepalive | `30` |
 
 ![Local MQTT configuration dialog captured from the SMT101x tablet](docs/images/local-mqtt-settings.png)
 
-Tap **OK** to save and enable the OEM MQTT publisher. Ensure the MQTT switch
+Tap **OK** to save and enable the built-in MQTT client. Ensure the MQTT switch
 is on when finished. The switch indicates that MQTT is enabled, not that
 sensor publications are reaching the plugin.
 
@@ -123,394 +94,134 @@ sensor publications are reaching the plugin.
 
 | Setting | Local-mode value |
 | --- | --- |
-| **Host MQTT capture broker on this tablet** | **On** |
-| `mqttClientId` | Leave blank for automatic discovery, or match the tablet's `client_id` |
-| **Automatically recover stopped OEM MQTT publisher** | **On** for unattended recovery |
+| **Automatically recover stopped built-in MQTT client** | **On** for unattended recovery |
 | **Automatically re-enable disabled tablet MQTT** | Optional: **On** if recovery should also turn the Android MQTT switch back on |
 
 Restore automatic re-enabling after configuration if you want that behavior.
-Leave it off to respect intentional MQTT disables. Confirm that real sensor
-readings appear in Kiosk Satellite after saving the tablet settings.
-
-Changing modes does not rewrite the tablet's MQTT connection settings.
-Configure the correct server address in Android settings when switching.
-Optional automatic re-enabling works in either mode and only changes the
-MQTT enable switch, not the configured connection.
-
-### Automatic OEM publisher recovery
-
-The confirmed firmware declares `iot_mqtt_client` as a disabled, `oneshot`
-Android init service. It does not automatically restart after a crash, even
-when `persist.start.mqtt` remains `1`. This leaves sensors `Unknown` while
-the plugin's broker is still listening.
-
-To enable recovery, enable **Automatically recover stopped OEM MQTT
-publisher** in the plugin page. Capture continues to work with recovery
-disabled. After reboot, recovery resumes when Kiosk Satellite starts the
-enabled plugin; ensure Kiosk Satellite is configured to launch on boot.
-
-The plugin checks the service once per minute. Local mode waits until the
-embedded broker is listening; external mode does not start a local broker.
-On the confirmed firmware only, when tablet MQTT is enabled
-(`persist.start.mqtt=1`) and the service is `stopped`, it reapplies
-the MQTT start property through the OEM Binder service's
-`setSystemProperties` operation. Android init starts the OEM service with its
-normal identity; the plugin does not launch a daemon itself.
-It verifies that the service is running after two seconds and logs that it
-is waiting for publications in local mode. In external mode it reports only
-that the publisher is running; external broker delivery is not monitored.
-Actual sensor readings still come exclusively
-from MQTT, not from the restart result.
-Once a real MQTT publication arrives, the recovery status changes to
-`MQTT publications are being received`. Publications arriving before the
-restart confirmation are also recognized, so the confirmation cannot
-overwrite active reception with a stale waiting message.
-
-Running services and disabled tablet MQTT are left unchanged by default.
-Enable **Automatically re-enable disabled tablet MQTT** to explicitly allow
-recovery to change `persist.start.mqtt` from `0` to `1`. This option only
-applies while automatic recovery is enabled, in either mode.
-It overrides intentional tablet MQTT disables, but does not change the MQTT
-broker address, port, credentials, or client ID. Successful re-enabling is
-logged separately and verified by checking both the enable property and the
-running service; sensor readings still require actual MQTT publications.
-Re-enabling uses the same five-minute cooldown as restarting.
-Turn this option off before intentionally disabling tablet MQTT.
-
-Restart attempts
-and failed checks are limited to once every five minutes. Rejected service
-bindings, unexpected service states, unsupported firmware, timeouts, and
-transaction failures are reported in the plugin status and log. Disabling
-recovery or the plugin stops new checks; an already submitted operation may
-finish. The plugin does not stop the OEM publisher when disabled.
-
-The Binder descriptor and transaction number are verified for the two exact
-firmware builds listed under **Known devices**. Other builds remain blocked;
-the error includes the detected build, and normal MQTT capture remains
-available with automatic recovery disabled.
-Recovery sends only the fixed `persist.start.mqtt=1` operation;
-it does not expose arbitrary OEM commands or property writes. SDK 1 has no
-Android Context accessor, so recovery obtains the host application using
-`ActivityThread.currentApplication`, verified on this firmware with target
-SDK 36. If a future host or firmware blocks that lookup, recovery reports
-the failure rather than silently claiming success.
-
-## Embedded MQTT sensor bridge
-
-Point the tablet's OEM `iot_mqtt_client` at `127.0.0.1` and port `1883`.
-The broker port is fixed and is not exposed as a plugin setting.
-The broker binds exclusively to IPv4 loopback, so connections from the
-tablet's LAN address or another device are not accepted. It supports MQTT
-3.1, 3.1.1, and 5 and the protocol operations needed to capture
-publications. It is not a general-purpose persistent broker.
-It accepts multiple concurrent loopback clients, allowing OEM builds that
-use separate MQTT connections for sensor publishing and command
-subscriptions to operate correctly.
-
-The broker recognizes these topic tokens:
-
-- Temperature: `temperature`, `temp`, `ths`
-- Humidity: `humidity`, `humid`, `hum`, `moisture`
-- Distance: `distance`
-
-Payloads may be plain numbers or JSON objects with matching keys. Known OEM
-examples are:
-
-```text
-office/sensors/temperature {"temperature":26.4}
-office/sensors/humidity {"humidity":38.5}
-rk3576_u/sensors/distance {"distance":802}
-office/switch1/status {"state":"OFF"}
-office/switch2/status {"state":"OFF"}
-office/door1/status {"state":"OFF"}
-office/door2/status {"state":"OFF"}
-```
-
-Distance readings are exposed unchanged as millimetres (for example, `802`
-means `802 mm`), based on the reported unit's scale. The MQTT payload does
-not declare a unit. Units without a distance publication have no Distance
-entity.
-Negative or non-finite distance readings are rejected and logged.
-
-The prefix is not fixed: any topic ending in `/switch1/status`,
-`/switch2/status`, `/door1/status`, or `/door2/status` is recognized.
-`ON` maps to active/open and `OFF` maps to inactive/closed.
-Switch commands are published as plain `ON` or `OFF` payloads to the
-corresponding `/switch1/set` and `/switch2/set` topic. Switch status
-publications remain JSON, for example `{"state":"ON"}`. The switches appear
-after their first status publication establishes a confirmed state and
-topic prefix.
-
-The RGB backlight learns the topic prefix (for example `office`) from the
-tablet's live status publications:
-
-```text
-office/light/status       {"state":"OFF"}
-office/brightness/status  {"brightness":20}
-office/rgb/status         {"rgb":[255,255,255]}
-```
-
-Power commands are sent to `light/switch` as plain `ON` or `OFF` payloads.
-RGB commands are sent to `rgb/set` as plain comma-separated channels such
-as `255,193,141`. Brightness commands use `brightness/set` with a plain
-0–100 value. Status publications remain JSON.
-In local mode, every successful OEM connection to the embedded MQTT broker
-arms a check of the next valid RGB power status, including reconnects.
-If it is `ON`, the plugin sends one `OFF` command on the command thread.
-Brightness and color reports do not trigger this check. Later power changes
-are left alone until the next MQTT connection. A settings change alone does
-not arm the check; the ensuing MQTT connection does. A user RGB command
-before the first power report cancels the current connection's check.
-Units without RGB power status receive no automatic command. External MQTT
-recovery mode does not control the RGB light. Delivery failures are reported
-through the existing command status and log; the command is not retried
-until a new connection and an `ON` power report.
-`office/backlight/status` is the tablet display backlight, not the RGB
-light, and is intentionally ignored.
-
-### MQTT client ID and topic prefix
-
-The **MQTT client ID (optional)** setting corresponds to `client_id` in the
-tablet's MQTT settings. The OEM client also uses that value as the prefix for
-its status and command topics. In the examples above the `client_id` is
-`office`, but another tablet may use `kitchen` or `hall-panel`.
-
-Leave **MQTT client ID (optional)** blank to learn the prefix from the
-tablet's `/status` publications. Set it explicitly to the same value as
-`client_id` in the tablet's MQTT settings. For example, setting both to
-`kitchen` sends RGB commands to `kitchen/light/switch`,
-`kitchen/brightness/set`, and `kitchen/rgb/set`, and switch commands to
-`kitchen/switch1/set` and `kitchen/switch2/set`.
-
-Do not include a leading or trailing slash. The plugin removes those if
-entered. MQTT wildcards (`+` and `#`) are not valid in this setting.
-
-The plugin log records the topic filters requested by the OEM MQTT client
-and every outbound RGB or switch command. When a firmware publishes status
-without subscribing to command topics, the loopback broker also sends the
-command directly to its connected OEM MQTT client and logs that fallback.
-
-The broker accepts any MQTT client credentials, but its loopback-only bind
-keeps it inaccessible to other devices.
-
-### Entity state refresh and diagnostics
-
-All entities are detected from their own valid MQTT publications, rather than
-created at startup. Temperature, humidity, distance, doors, switches, and RGB
-backlight therefore appear only on units that publish their readings or status.
-Any valid RGB power, brightness, or color status detects the RGB backlight.
-External MQTT recovery mode does not create local entities.
-
-Every 60 seconds the plugin re-sends the last received temperature,
-humidity, distance, door, and switch states to Kiosk Satellite. A reading
-dropped by the host therefore recovers without waiting for the OEM value to
-change. The cache is reset and existing entities are removed when the
-plugin starts or its settings change. Each entity reappears after its next
-valid publication.
-
-Temperature, humidity, and distance readings older than 30 minutes are not
-re-sent; they are set to `Unknown` and the log records
-`No sensor.<name> reading received for 30 minutes`. Door and switch states
-may only be published by the OEM client when they change, so they do not
-expire. If no MQTT publication of any kind arrives for 10 minutes, the plugin
-logs and shows a status warning with the number of open OEM MQTT client
-connections. It reports `MQTT publications resumed.` when publications
-arrive again.
-
-Every OEM MQTT client disconnect is logged with its client ID, reason (for
-example `DISCONNECT received`, `connection closed by client`, or
-`Read timed out`), and connection duration. If the broker stops listening,
-for example because port 1883 is still held, it retries after 5, 10, and
-then every 30 seconds, and shows a status until it recovers.
-
-If Kiosk Satellite rejects an entity update, the plugin logs
-`Kiosk rejected <entity> update ...` at most once per minute per entity and
-writes the same line to logcat via `System.err`. When updates are accepted
-again, it logs `Kiosk accepted <entity> updates again.` If the rejection
-means Kiosk has ended the plugin session, the plugin logs
-`Kiosk ended this plugin session` and stops its broker so the next session
-can bind port 1883.
-
-Switch and RGB backlight commands are sent from a dedicated plugin thread,
-so a stalled MQTT write cannot trip Kiosk's plugin callback timeout.
-
-## Serial and IR observations
-
-The following observations were made on 10 October 2026 against the
-original V1.0A firmware listed under **Known devices**. They describe investigation
-results, not implemented plugin features. The tablet has separate physical
-RS232 and RS485 ports; this plugin currently exposes neither port nor IR.
-
-### UART access and mapping
-
-| Device node | Observation |
-| --- | --- |
-| `/dev/ttyS1` | Labelled `smt_serial_device`; candidate for one external serial connector |
-| `/dev/ttyS9` | Labelled `smt_serial_device`; candidate for the other external serial connector |
-| `/dev/ttyS6` | Explicitly selected by the OEM Zigbee startup configuration at 115200 baud; a responding physical radio has not been verified |
-
-The mapping of `/dev/ttyS1` and `/dev/ttyS9` to RS232 versus RS485 is
-**not confirmed**. Three internal UART nodes do not mean three external
-serial connectors. Baud rates, connector pinouts, and RS485 transmit/receive
-direction control also remain unverified.
-
-A temporary diagnostic plugin tested read/write opens from inside Kiosk
-Satellite, under its actual application identity. All three nodes returned
-`EACCES (Permission denied)`, with explicit SELinux read/write denials.
-No port opened, no serial data was read or transmitted, and no serial
-configuration was changed.
-
-The firmware includes `/system/xbin/lmiot-efr32`, whose binary contains
-Silicon Labs Ember/Zigbee gateway functions. Both the OEM startup script
-and the `zigbee_gw` init declaration select `/dev/ttyS6` at 115200 baud.
-This confirms the software's intended Zigbee UART, not the presence or
-health of a radio on this particular tablet.
-
-At inspection, no Zigbee gateway or bridge process was running, and the
-queried Zigbee init-service properties were absent. The init declaration
-points to `/data/vensi/lmiot-efr32`, which was not accessible through ADB;
-the older `zigbee` service declaration in the board init file is commented
-out. The presence of scripts and binaries therefore does not establish
-that the gateway is active or correctly installed.
-
-Although the nodes have permissive filesystem permissions, the firmware's
-SELinux policy restricts access. Its vendor policy explicitly allows
-platform/system application domains to access `smt_serial_device`, but
-Kiosk Satellite runs in the `untrusted_app` domain. Adding a native serial
-library does not give the plugin the OEM apps' security identity.
-
-### OEM apps and services inspected
-
-| Area | Result |
-| --- | --- |
-| OEM Binder service | No dedicated serial open/read/write or file-descriptor handoff API was found in the inspected interface |
-| OEM `executeCommand` hook | An identity-only call from Kiosk Satellite reached the OEM service, but failed because its implementation tries to launch `su`: `Cannot run program "su": No such file or directory` |
-| KeepAlive, OEM kiosk, and Settings apps | No serial-forwarding API was found in the inspected implementations |
-| Factory-test apps | Serial diagnostics exist, but no callable serial-serving service appeared in the inspected exported component listings; their APKs were not readable through ADB, so inspection is incomplete |
-| Firmware Zigbee bridge | A Zigbee/MQTT stack exists, but this does not establish a general-purpose RS232/RS485 network bridge |
-| Android serial service | Present; the tested query was rejected because it requires restricted `android.permission.SERIAL_PORT` access |
-| Android IR support | No standard `consumer_ir` service or advertised consumer-IR feature was found; an OEM-specific IR interface has not been established |
-
-Launching the generic factory serial test directly tried `/dev/ttySnull`
-and failed, indicating missing port-selection input. That result is not
-evidence of faulty serial hardware. The OEM service used for MQTT recovery
-performs an operation on the plugin's behalf; it does not transfer its
-permissions to Kiosk Satellite.
-
-### Android serial API versions and permissions
-
-The public
-[`android.hardware.serial.SerialPort`](https://developer.android.com/reference/android/hardware/serial/SerialPort)
-API, including `requestOpen()`, was added in **API level 37**. It is not
-available on the confirmed tablet's **Android 14 / API level 34** firmware.
-This newer public API is distinct from the older restricted Android serial
-service already present on the tablet.
-
-Direct inspection confirmed that this firmware declares
-`android.permission.SERIAL_PORT` with protection level
-`signature|privileged`. The permission exists, but it is not a normal
-runtime permission that a user can grant to Kiosk Satellite through a
-settings prompt.
-
-The UART access probe used direct device opens rather than the Java serial
-API and was still rejected by SELinux. Building a plugin against API 37
-does not add that API to Android 14 or remove the device-access restrictions.
-
-A manufacturer firmware upgrade supporting the newer public API could
-provide another route. Its availability alone does not prove that the OEM
-exposes these onboard RS232/RS485 ports through it: port enumeration,
-authorization, and actual operation would need to be verified on the
-upgraded firmware.
-
-### Possible Home Assistant serial bridge
-
-The intended direction is for Home Assistant to use equipment connected to
-the **tablet's** RS232 or RS485 connector over the network:
-
-```text
-Home Assistant <-> tablet network serial endpoint <-> tablet RS232 / RS485 <-> equipment
-```
-
-Kiosk Satellite supports networking and native plugin libraries, but direct
-UART access is blocked under the tested firmware policy. No usable existing
-OEM serial-serving path has been verified.
-
-A possible solution is a manufacturer-authorized companion service or a
-firmware update exposing a narrowly scoped serial API. Manufacturer signing
-or installation alone must not be assumed sufficient: the service also needs
-the appropriate Android permissions and SELinux authorization. It could
-perform UART operations on the plugin's behalf or host the network endpoint
-itself.
-
-After hardware access is established, choose raw TCP, RFC2217, or another
-transport supported by the intended Home Assistant integration. RS232 and
-RS485 should have independent configuration and exclusive client ownership.
-Network serial endpoints must be restricted to a trusted LAN/VPN and
-authorized clients, not exposed directly to the internet. IR would require
-a separate verified interface; network serial support does not automatically
-expose IR.
-
-Temporary diagnostic plugins were removed after testing. No firmware
-permissions were changed, and the existing MQTT sensor plugin was left
-enabled.
-
-## Build and test
-
-Requirements:
-
-- JDK 17 or newer
-- Gradle 9 or newer
-- Android SDK with an installed platform and build-tools containing `d8`
-- `ANDROID_HOME` or `ANDROID_SDK_ROOT`
-
-Run:
-
-```bash
-gradle clean build
-```
-
-The installable ZIP and SHA-256 checksum are generated in `dist/`.
-
-## Automated CI and releases
-
-Pushes, pull requests, and manual workflow runs execute the complete build
-and test suite. Each run starts with `clean`, so its `smt101-plugin-dist`
-GitHub Actions artifact contains only the current manifest, installable ZIP,
-and SHA-256 checksum. CI artifacts are retained for 30 days.
-
-Releases are fully automated with
-[semantic-release](https://semantic-release.org). Every push to `main` runs
-`.github/workflows/release.yml`, which reads the
-[Conventional Commits](https://www.conventionalcommits.org) since the last
-`v<version>` tag and decides the next version:
-
-| Commit message                                   | Release         |
-| ------------------------------------------------ | --------------- |
-| `fix: ...`, `perf: ...`                          | patch (0.1.x)   |
-| `feat: ...`                                      | minor (0.x.0)   |
-| `feat!: ...` or a `BREAKING CHANGE:` footer      | major (x.0.0)   |
-| `chore:`, `ci:`, `docs:`, `test:`, other text    | no release      |
-
-When a release is due, `scripts/prepare-release.sh` writes the new version
-into `kiosk-satellite-plugin.json`, runs the same clean build and tests, and
-verifies the ZIP and checksum. semantic-release then commits the manifest back
-to `main` as `chore(release): <version> [skip ci]`, tags `v<version>`, and
-creates the GitHub Release with generated notes. After the new release
-succeeds, older version releases and version tags are removed so only the
-current package remains.
-
-Each release uploads exactly one standalone `kiosk-satellite-plugin.json`
-asset for Plugin Manager discovery, plus the installable ZIP and its
-SHA-256 checksum.
-
-Do not bump the manifest version by hand. When squash-merging pull requests,
-use a Conventional Commit PR title (for example `fix: resend last MQTT values`),
-because that title becomes the commit semantic-release analyzes.
-
-## Installation
-
-1. Build the plugin or download its ZIP.
-2. Install the ZIP through Kiosk Satellite's Plugin Manager.
-3. Configure the OEM MQTT client to publish to the tablet's embedded broker.
-4. Confirm the plugin log reports an MQTT client connection and captured
-   temperature/humidity publications.
+Leave it off to respect intentional MQTT disables.
+
+The plugin does not rewrite Android's MQTT connection settings. If you
+previously used an external server, change the tablet's server to
+`127.0.0.1:1883` yourself. Previously saved broker-disable settings are ignored.
+
+## Configuration reference
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| **Automatically recover stopped built-in MQTT client** (`enableAutomaticMqttRecovery`) | Off | Restart the tablet's built-in MQTT client if it stops, so readings can resume. Works on supported firmware once the local broker is listening. Does not fix a client that is running but disconnected. MQTT stays switched off unless automatic re-enabling is also enabled. |
+| **Automatically re-enable disabled tablet MQTT** (`reenableDisabledMqtt`) | Off | Turn the tablet's MQTT switch back on if it has been disabled. Requires automatic recovery. Leave this off if you want to be able to turn MQTT off yourself. Connection settings stay unchanged; turning MQTT on does not guarantee delivery of readings. |
+
+## Important behavior and limitations
+
+### RGB light effects
+
+The RGB light offers **Rainbow**, **Breathe**, **Candle**, and warning flashes
+in **Red**, **Amber**, **Yellow**, **Green**, **Cyan**, **Blue**, **Magenta**,
+and **White** in its Home Assistant effect list.
+Rainbow cycles through colors, Breathe pulses the current color's brightness,
+and Candle produces a warm flicker. Warning effects alternate the selected
+color with off, holding each phase for half a second after its commands finish.
+Starting or restarting a warning effect always sends OFF first and holds it
+for half a second before the first flash.
+Flashing lights may be uncomfortable for
+some people; do not use these effects as safety-critical warnings.
+
+Effects run in the plugin using repeated MQTT commands, not in the hardware.
+Smooth effects send only changed MQTT values, compared after rounding to the
+tablet's brightness and RGB ranges. Routine effect commands and RGB status
+echoes are not logged; effect starts/stops, invalid status, and delivery errors
+remain logged. Warning flashes keep their explicit power/color commands.
+Home Assistant shows the light on, white, and at 100% brightness with the effect
+selected throughout the animation, including the dark phase of a warning flash.
+These display values do not change the actual effect color or brightness.
+They use the brightness selected when the effect starts. Select **None** or
+send a manual power, brightness, or color command to stop an effect.
+Stopping leaves the last applied light state in place; send an explicit
+command if you want a particular final color or power state.
+Effects stop on settings changes, disable, or a command delivery failure;
+they are not saved or automatically resumed. Physical appearance on the
+tablet remains to be verified.
+
+On startup or after settings changes, the info bar shows
+`Detecting device capabilities, please wait.`
+If no MQTT publications arrive within 60 seconds, it shows a setup error with
+a link to this README's Tablet MQTT settings section. A connected client alone does not count
+as a publication. The first publication clears the startup error; valid readings
+then identify the capabilities actually present. Settings changes restart the wait.
+Automatic recovery progress stays in the log and cannot clear this error before
+MQTT publications arrive.
+When a feature first sends a valid reading or status, the plugin posts an
+informational message such as `Detected capabilities on this device:
+Temperature, Humidity, Distance, RGB light.` The list grows as more features
+are detected and resets on restart or settings changes. Later operational
+status messages or errors can replace it. It creates no additional entities.
+
+The plugin automatically learns command topic prefixes from valid status
+messages. There is no manual client-ID setting in the plugin; any previously
+saved override is ignored. Keep the tablet's own Android MQTT client ID as is.
+
+- **MQTT clients connected:** The first Remote Admin overview tile is titled
+  **MQTT Broker**, with the connected-client count and detected MQTT client IDs
+  underneath. The count updates on connection changes; a connected client does
+  not guarantee sensor readings are arriving.
+  The indicator is red with no clients and green with one or more clients.
+  For example: `1 client connected: office`. IDs come from the clients'
+  MQTT connection requests, not a manually configured name.
+  Disconnected IDs are removed; long lists are shortened to fit the tile.
+- **Last MQTT Broker payload:** A second Remote Admin tile shows the actual latest
+  payload. When **Automatically recover stopped built-in MQTT client** is
+  enabled in local mode, its indicator is green when received less than 60
+  seconds ago, or red after 60 seconds and before the first message.
+  Otherwise it stays neutral. The payload remains
+  visible regardless. This indicator does not change recovery or re-enabling.
+  It shows the latest
+  payload, such as `{"temperature":26.4}`. Payloads longer than 80 characters
+  are shortened with `...`; control characters are displayed as spaces.
+  Empty payloads show `(empty payload)`. Only the latest preview is retained.
+  Before the first message it shows `Waiting for first message`. It resets when the
+  plugin restarts or its settings change.
+  Updates are limited to once per clock second during traffic; the existing
+  minute refresh also displays the latest preview after a burst.
+  Neither tile creates an ESPHome or Home Assistant entity.
+- **Relay safety:** Switch 1 and Switch 2 control physical relay outputs.
+  Their connected loads, contact types, and electrical ratings are not
+  established by this project. Check your device documentation and wiring.
+  Commands operate immediately without confirmation; keep unsafe or
+  unverified loads disconnected while testing.
+- **RGB on connection:** In local mode, the plugin turns the RGB light off
+  if its first valid power status after an OEM MQTT connection is `ON`.
+  This applies on reconnects too. Later power changes are left alone.
+  A user RGB command before that first report cancels the check.
+- **Stale readings:** Temperature, humidity, and distance readings become
+  `Unknown` after 30 minutes without an update. Door and switch states do
+  not expire because the built-in MQTT client may report them only when they change.
+- **Settings changes:** Existing local entities are removed and reappear
+  after their next valid publication.
+- **Recovery:** Checks run once per minute; restart attempts and failed
+  checks have a five-minute cooldown. Recovery leaves running publishers
+  and intentionally disabled MQTT unchanged unless re-enabling is enabled.
+  Turn re-enabling off before intentionally disabling tablet MQTT.
+- **After reboot:** Recovery resumes when Kiosk Satellite starts the enabled
+  plugin. Configure Kiosk Satellite to launch on boot if needed.
+- **Disabling recovery:** Stops new checks but may not cancel an operation
+  already submitted. Disabling the plugin does not stop the built-in MQTT client.
+- **Diagnostics:** Ten minutes without MQTT publications produces a status
+  warning. Check the plugin status and log for connection, command, broker,
+  or recovery failures. See [technical diagnostics](docs/TECHNICAL.md#entity-state-refresh-and-diagnostics)
+  for detailed behavior.
+
+## Disclaimer
+
+This is an independent community plugin, not affiliated with, endorsed by,
+or supported by Apolosign or the manufacturers of SMT101-family devices
+and their OEM firmware.
+
+This plugin is provided "as is" and without warranties of any kind, to the
+maximum extent permitted by applicable law. Use it at your own risk. You are
+responsible for deciding whether it is suitable for your device and setup,
+reviewing its settings, and testing its behavior. The plugin can interact
+with the built-in MQTT client and device controls; do not rely on it for safety-critical
+or other essential functions. To the maximum extent permitted by applicable
+law, the author is not liable for damages or losses arising from use of the
+plugin. Your statutory rights are not affected. See the Apache-2.0
+[LICENSE](LICENSE) for the full warranty disclaimer and limitation of liability.

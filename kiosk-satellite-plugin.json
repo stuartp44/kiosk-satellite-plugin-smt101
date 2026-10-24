@@ -7,7 +7,7 @@
   "minAndroidSdk": 24,
   "entryClass": "com.stuartp44.smt101.Smt101Plugin",
   "icon": "icon.png",
-  "description": "Two modes for SMT101x tablets: recover the OEM publisher using your existing external MQTT settings, or manage sensors, switches, doors, and RGB backlight through Kiosk Satellite using the built-in local broker, with no separate MQTT server required.",
+  "description": "Bring your SMT101 tablet's built-in sensors and controls into Kiosk Satellite. See temperature, humidity, and distance readings, check door inputs, and control relays and RGB lighting on supported models. Everything runs locally on the tablet, without a separate MQTT server. The plugin can also restart the tablet's built-in MQTT client if it stops.",
   "author": "Stuart Pearson",
   "license": "Apache-2.0",
   "capabilities": [
@@ -18,33 +18,17 @@
       "key": "reenableDisabledMqtt",
       "type": "boolean",
       "title": "Automatically re-enable disabled tablet MQTT",
-      "default": false,
+      "default": true,
       "group": "Embedded MQTT broker",
-      "description": "With automatic recovery enabled, turns Android Settings > System > MQTT back on in either mode. Checks every minute, with a five-minute recovery cooldown; local mode waits for the broker. Reopen System settings to see the switch. Enabled does not guarantee delivery. Leave off to respect intentional disables. Server address, port, credentials, and client ID stay unchanged."
+      "description": "Turn the tablet's MQTT switch back on if it has been disabled. Requires automatic recovery. Leave off if you want to be able to turn MQTT off yourself. Host MQTT capture broker on this tablet. Turning MQTT on does not guarantee that readings are reaching the plugin."
     },
     {
       "key": "enableAutomaticMqttRecovery",
       "type": "boolean",
-      "title": "Automatically recover stopped OEM MQTT publisher",
-      "default": false,
-      "group": "Embedded MQTT broker",
-      "description": "In either mode, checks every minute and restarts a stopped OEM publisher, with a five-minute recovery cooldown. Local mode waits for the broker. Does not repair a running but disconnected client or network/server failures, or verify external delivery. Disabled MQTT is respected unless automatic re-enabling is selected. Connection settings stay unchanged. See README for details."
-    },
-    {
-      "key": "enableEmbeddedMqttBroker",
-      "type": "boolean",
-      "title": "Host MQTT capture broker on this tablet",
+      "title": "Automatically recover stopped built-in MQTT client",
       "default": true,
       "group": "Embedded MQTT broker",
-      "description": "On: sensors and controls through Kiosk Satellite, with no separate MQTT server. Set tablet MQTT to 127.0.0.1:1883; only local connections are accepted. Off: external MQTT recovery mode; keep your existing server settings and enable automatic recovery. External readings and controls are not bridged into Kiosk Satellite. This setting does not change the tablet's MQTT address."
-    },
-    {
-      "key": "mqttClientId",
-      "type": "string",
-      "title": "MQTT client ID (optional)",
-      "default": "",
-      "group": "Embedded MQTT broker",
-      "description": "Must match client_id in the tablet's MQTT settings, for example office. The OEM client uses this value as its MQTT topic prefix. Leave blank to learn it automatically from status publications."
+      "description": "Restart the tablet's built-in MQTT client if it stops, so readings can resume. Works on supported firmware once the local broker is listening. Checks once a minute and waits five minutes between recovery attempts. Does not fix a client that is running but disconnected. Leaves MQTT switched off unless automatic re-enabling is also enabled."
     }
   ],
   "groups": [
