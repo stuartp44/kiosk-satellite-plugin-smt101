@@ -887,10 +887,14 @@ class Smt101PluginTest {
     @Test
     void userRgbCommandCancelsConnectionPowerCheck() throws Exception {
         try (Socket client = startLocalBrokerClient()) {
+            host.statusReceived = new CountDownLatch(1);
             Map<String, Object> command = new LinkedHashMap<String, Object>();
             command.put("on", Boolean.TRUE);
             plugin.onEvent("light.rgb_backlight", command);
             assertTrue(host.statusReceived.await(2, TimeUnit.SECONDS));
+            assertEquals("RGB backlight command could not be delivered because no RGB status has been received.",
+                    host.lastStatus);
+            assertTrue(host.lastStatusThread.startsWith("smt101-commands"));
             plugin.handleMqttMessage("office/light/status", "{\"state\":\"ON\"}");
             assertNoCommand(client, new DataInputStream(client.getInputStream()));
             assertTrue(host.logsContaining("RGB backlight is on after MQTT connection").isEmpty());
