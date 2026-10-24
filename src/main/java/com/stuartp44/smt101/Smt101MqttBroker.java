@@ -156,7 +156,7 @@ final class Smt101MqttBroker {
         synchronized (out) {
             writeConnAck(out, info.protocolLevel);
         }
-        ClientConnection connection = new ClientConnection(client, out, info.protocolLevel);
+        ClientConnection connection = new ClientConnection(client, out, info.protocolLevel, info.clientId);
         clients.add(connection);
         long connectedAt = System.currentTimeMillis();
         String reason = "broker stopped";
@@ -221,6 +221,16 @@ final class Smt101MqttBroker {
 
     int connectedClientCount() {
         return clients.size();
+    }
+
+    List<String> connectedClientIds() {
+        List<String> ids = new ArrayList<String>();
+        synchronized (clients) {
+            for (ClientConnection client : clients) {
+                ids.add(client.clientId);
+            }
+        }
+        return ids;
     }
 
     PublishResult publish(String topic, String payload) {
@@ -645,6 +655,7 @@ final class Smt101MqttBroker {
     }
 
     private static final class ClientConnection {
+        final String clientId;
         final Socket socket;
         final DataOutputStream output;
         final int protocolLevel;
@@ -677,7 +688,8 @@ final class Smt101MqttBroker {
             return false;
         }
 
-        ClientConnection(Socket socket, DataOutputStream output, int protocolLevel) {
+        ClientConnection(Socket socket, DataOutputStream output, int protocolLevel, String clientId) {
+            this.clientId = clientId;
             this.socket = socket;
             this.output = output;
             this.protocolLevel = protocolLevel;

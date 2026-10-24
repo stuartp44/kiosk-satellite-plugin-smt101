@@ -51,21 +51,21 @@ Android init service. It does not automatically restart after a crash, even
 when `persist.start.mqtt` remains `1`. This leaves sensors `Unknown` while
 the plugin's broker is still listening.
 
-To enable recovery, enable **Automatically recover stopped OEM MQTT
-publisher** in the plugin page. Capture continues to work with recovery
+To enable recovery, enable **Automatically recover stopped built-in MQTT
+client** in the plugin page. Capture continues to work with recovery
 disabled. After reboot, recovery resumes when Kiosk Satellite starts the
 enabled plugin; ensure Kiosk Satellite is configured to launch on boot.
 
 The plugin checks the service once per minute. Local mode waits until the
-embedded broker is listening; external mode does not start a local broker.
+embedded broker is listening. The broker is always enabled; saved
+`enableEmbeddedMqttBroker=false` settings are ignored.
 On the confirmed firmware only, when tablet MQTT is enabled
 (`persist.start.mqtt=1`) and the service is `stopped`, it reapplies
 the MQTT start property through the OEM Binder service's
 `setSystemProperties` operation. Android init starts the OEM service with its
 normal identity; the plugin does not launch a daemon itself.
 It verifies that the service is running after two seconds and logs that it
-is waiting for publications in local mode. In external mode it reports only
-that the publisher is running; external broker delivery is not monitored.
+is waiting for publications.
 Actual sensor readings still come exclusively
 from MQTT, not from the restart result.
 Once a real MQTT publication arrives, the recovery status changes to
@@ -76,7 +76,7 @@ overwrite active reception with a stale waiting message.
 Running services and disabled tablet MQTT are left unchanged by default.
 Enable **Automatically re-enable disabled tablet MQTT** to explicitly allow
 recovery to change `persist.start.mqtt` from `0` to `1`. This option only
-applies while automatic recovery is enabled, in either mode.
+applies while automatic recovery is enabled.
 It overrides intentional tablet MQTT disables, but does not change the MQTT
 broker address, port, credentials, or client ID. Successful re-enabling is
 logged separately and verified by checking both the enable property and the
@@ -178,8 +178,7 @@ Brightness and color reports do not trigger this check. Later power changes
 are left alone until the next MQTT connection. A settings change alone does
 not arm the check; the ensuing MQTT connection does. A user RGB command
 before the first power report cancels the current connection's check.
-Units without RGB power status receive no automatic command. External MQTT
-recovery mode does not control the RGB light. Delivery failures are reported
+Units without RGB power status receive no automatic command. Delivery failures are reported
 through the existing command status and log; the command is not retried
 until a new connection and an `ON` power report.
 `office/backlight/status` is the tablet display backlight, not the RGB
@@ -187,20 +186,17 @@ light, and is intentionally ignored.
 
 ### MQTT client ID and topic prefix
 
-The **MQTT client ID (optional)** setting corresponds to `client_id` in the
-tablet's MQTT settings. The OEM client also uses that value as the prefix for
+The `client_id` in the tablet's Android MQTT settings is also used by the OEM
+client as the prefix for
 its status and command topics. In the examples above the `client_id` is
 `office`, but another tablet may use `kitchen` or `hall-panel`.
 
-Leave **MQTT client ID (optional)** blank to learn the prefix from the
-tablet's `/status` publications. Set it explicitly to the same value as
-`client_id` in the tablet's MQTT settings. For example, setting both to
+The plugin learns each command prefix from valid `/status` publications;
+no manual override is available. Previously saved `mqttClientId` plugin
+settings are ignored. For example, a tablet using
 `kitchen` sends RGB commands to `kitchen/light/switch`,
 `kitchen/brightness/set`, and `kitchen/rgb/set`, and switch commands to
 `kitchen/switch1/set` and `kitchen/switch2/set`.
-
-Do not include a leading or trailing slash. The plugin removes those if
-entered. MQTT wildcards (`+` and `#`) are not valid in this setting.
 
 The plugin log records the topic filters requested by the OEM MQTT client
 and every outbound RGB or switch command. When a firmware publishes status
@@ -219,26 +215,80 @@ keeps it inaccessible to other devices.
 
 ### Entity state refresh and diagnostics
 
-The settings page includes the `last_mqtt_message` compact bar chart, published
-through `publishSeries`, not the entity API. It is never exposed through
+RGB effects are scheduled with fixed delay on the single command executor:
+250 ms for Rainbow/Breathe/Candle and 500 ms for warning effects. After completing a
+phase's commands warning effects hold for at least half a second before starting the next
+phase; phases advance sequentially rather than skipping based on wall time.
+Each new warning task starts in the off phase, including reselecting an active
+warning effect. Every flash is preceded by an explicit OFF command and hold.
+This is fixed pacing, not acknowledgement-based flow control. Only one
+effect task and one base state are retained; there is no frame queue/history.
+Smooth effects retain at most three last-sent topic/payload pairs in the effect
+task and skip identical integer payloads. The cache starts empty for each effect
+and is cleared when a client connects, so initial commands are resent. Warning
+frames bypass this filtering. Cancellation releases the task and its cache.
+Routine effect command/delivery logs and incoming RGB status logs are suppressed
+while an effect is active; lifecycle, connection, invalid status, and failure
+logs remain enabled. The latest-payload diagnostic still receives every message.
+Warning off frames send only `light/switch=OFF`, with no brightness or RGB
+writes that could relight the LEDs. The next on frame restores the selected
+color and brightness.
+The selected effect is published once after its first successful frame, with
+logical power on, white RGB, and 100% brightness, independently of the physical
+base brightness/color. Subsequent animation
+frames and OEM status echoes update physical state internally without publishing
+entity changes. Manual commands or effect termination resume normal state reporting.
+Cancellation generations reject obsolete commands between MQTT writes.
+Manual light commands, configuration changes, and stop cancel the future;
+executor shutdown releases the task on unload. Live OEM status updates
+preserve the currently selected effect in the published light state.
+No transition duration support is claimed.
+
+Capability discovery posts an informational plugin status and log entry only
+when a new supported feature sends a valid reading/status. A fixed set of
+eight possible feature names is retained in discovery order (three numeric
+sensors, two switches, two doors, and RGB light). Invalid/unknown messages
+do not detect features, repeated readings do not repeat announcements, and
+the set is cleared on settings changes and stop. Operational status messages
+can subsequently replace the discovery message.
+
+The `last_mqtt_message` Remote Admin status tile reports the embedded broker's
+current client count in its state line on connect/disconnect and the existing 60-second refresh.
+It uses the broker's connection collection rather than maintaining another
+client registry.
+The count is not an ESPHome entity and does not confirm message delivery.
+
+The Remote Admin overview includes the `last_mqtt_message` plain-text status
+tile, published through `publishStatusTile`, not the entity API. It is never exposed through
 ESPHome or Home Assistant.
-It records actual inbound MQTT publications, not connections, broker startup,
-outbound commands, or cached entity refreshes. It displays local tablet time
-as `yyyy-MM-dd HH:mm:ss z`, updates when the displayed value changes, and is
-re-published during the existing 60-second state refresh. Only the latest
-timestamp and displayed value are retained; no message history is stored.
-Its single sample has value `1` at the last publication's Unix timestamp;
-the title includes the formatted date and time. Before receiving a message
-and in external mode, the chart has no samples and its title explains why.
-The host clears charts on stop; the plugin resets the chart on reconfiguration.
-In external
-mode it explicitly reports that messages are not monitored.
+The title is `MQTT Broker`. In local mode the state line is
+`1 client connected: <id>` or `<count> clients connected: <id>, ...`, without
+a timestamp. Client IDs come from MQTT CONNECT and are retained only on
+active broker connections. The display is sanitized and capped at 80
+characters; empty IDs appear as `(unnamed)`. Disconnects remove IDs from the
+next snapshot, without a separate diagnostic registry or history.
+The dot is red (`off`) for zero local clients and green (`on`) for one or more.
+It indicates connections, not message delivery.
+The host clears tiles on stop; the plugin resets the tile on reconfiguration.
+The second tile, `last_mqtt_payload`, shows an 80-character preview of the
+latest inbound payload, with ISO control characters replaced by spaces and
+`...` indicating truncation. It retains only that bounded preview, never the
+full payload or a message history. During traffic it publishes at most once
+per clock second, with the latest pending preview also sent by the existing
+60-second refresh. Both tiles reset together. A single one-second task on
+the existing plugin executor flushes pending payload previews and checks
+freshness, publishing only when the preview or indicator changes. The task
+is shut down with the executor on stop and does not publish after stop.
+With automatic MQTT recovery enabled in local mode, the payload indicator
+is green for an inbound publication less than 60
+seconds old, red at 60 seconds or before the first publication, and neutral
+when automatic recovery is disabled. The preview remains
+visible with recovery disabled. Recovery/re-enabling behavior is unchanged.
 
 All entities are detected from their own valid MQTT publications, rather than
 created at startup. Temperature, humidity, distance, doors, switches, and RGB
 backlight therefore appear only on units that publish their readings or status.
 Any valid RGB power, brightness, or color status detects the RGB backlight.
-External MQTT recovery mode does not create local entities.
 
 Every 60 seconds the plugin re-sends the last received temperature,
 humidity, distance, door, and switch states to Kiosk Satellite. A reading

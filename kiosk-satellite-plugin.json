@@ -7,7 +7,7 @@
   "minAndroidSdk": 24,
   "entryClass": "com.stuartp44.smt101.Smt101Plugin",
   "icon": "icon.png",
-  "description": "Bring your SMT101 tablet's built-in sensors and controls into Kiosk Satellite. See temperature, humidity, and distance readings, check door inputs, and control relays and RGB lighting on supported models. Everything can run locally on the tablet, without a separate MQTT server. The plugin can also restart the tablet's built-in MQTT service if it stops, whether you use Kiosk Satellite or your own MQTT server.",
+  "description": "Bring your SMT101 tablet's built-in sensors and controls into Kiosk Satellite. See temperature, humidity, and distance readings, check door inputs, and control relays and RGB lighting on supported models. Everything runs locally on the tablet, without a separate MQTT server. The plugin can also restart the tablet's built-in MQTT client if it stops.",
   "author": "Stuart Pearson",
   "license": "Apache-2.0",
   "capabilities": [
@@ -18,41 +18,22 @@
       "key": "reenableDisabledMqtt",
       "type": "boolean",
       "title": "Automatically re-enable disabled tablet MQTT",
-      "default": false,
+      "default": true,
       "group": "Embedded MQTT broker",
-      "description": "Turn the tablet's MQTT switch back on if it has been disabled. Requires automatic recovery and works with either a local or external MQTT server. Leave off if you want to be able to turn MQTT off yourself. Your server address and login details are kept unchanged. Turning MQTT on does not guarantee that readings are reaching their destination."
+      "description": "Turn the tablet's MQTT switch back on if it has been disabled. Requires automatic recovery. Leave off if you want to be able to turn MQTT off yourself. Host MQTT capture broker on this tablet. Turning MQTT on does not guarantee that readings are reaching the plugin."
     },
     {
       "key": "enableAutomaticMqttRecovery",
       "type": "boolean",
-      "title": "Automatically recover stopped OEM MQTT publisher",
-      "default": false,
-      "group": "Embedded MQTT broker",
-      "description": "Restart the tablet's built-in MQTT service if it stops, so readings can resume. Works in either mode on supported firmware. Checks once a minute and waits five minutes between recovery attempts. Does not fix Wi-Fi, server problems, or a service that is running but disconnected. Leaves MQTT switched off unless automatic re-enabling is also enabled."
-    },
-    {
-      "key": "enableEmbeddedMqttBroker",
-      "type": "boolean",
-      "title": "Host MQTT capture broker on this tablet",
+      "title": "Automatically recover stopped built-in MQTT client",
       "default": true,
       "group": "Embedded MQTT broker",
-      "description": "Turn on to use the tablet's sensors and controls in Kiosk Satellite without a separate MQTT server. In Android's MQTT settings, set the server to 127.0.0.1 and port to 1883. Turn off to keep using your own MQTT server; automatic recovery can still be used, but no local entities are created. This option does not change Android's MQTT settings for you."
-    },
-    {
-      "key": "mqttClientId",
-      "type": "string",
-      "title": "MQTT client ID (optional)",
-      "default": "",
-      "group": "Embedded MQTT broker",
-      "description": "Usually leave this blank: the plugin learns the tablet's ID automatically when it sends status updates. If you enter an ID, copy the client_id value from Android's MQTT settings exactly, for example office. Used for local sensor management; it does not change the tablet's ID."
+      "description": "Restart the tablet's built-in MQTT client if it stops, so readings can resume. Works on supported firmware once the local broker is listening. Checks once a minute and waits five minutes between recovery attempts. Does not fix a client that is running but disconnected. Leaves MQTT switched off unless automatic re-enabling is also enabled."
     }
   ],
   "groups": [
     {
       "title": "Embedded MQTT broker",
-      "charts": [
-        "last_mqtt_message"
-      ],
       "readingsTitle": "Sensor readings",
       "readings": [
         "sensor.temperature",
