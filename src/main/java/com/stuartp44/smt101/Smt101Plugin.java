@@ -1,5 +1,8 @@
 package com.stuartp44.smt101;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -22,6 +25,7 @@ public final class Smt101Plugin implements KioskPlugin {
     private static final String DISTANCE_NAME = "Distance";
     private static final String RGB_BACKLIGHT_NAME = "RGB Backlight";
     private static final String RGB_BACKLIGHT_KEY = "rgb_backlight";
+    private static final String LAST_MQTT_MESSAGE_KEY = "last_mqtt_message";
     private static final long STATE_REFRESH_SECONDS = 60L;
     private static final long FAILURE_LOG_INTERVAL_MS = 60_000L;
     static final long MQTT_SILENCE_WARNING_MS = 10L * 60_000L;
@@ -75,6 +79,8 @@ public final class Smt101Plugin implements KioskPlugin {
     private final AtomicBoolean sessionRevoked = new AtomicBoolean(false);
     // 0 disables the silence check; set when the broker starts and on every MQTT publication.
     private volatile long lastMqttActivityMs;
+    private Long lastMqttMessageMs;
+    private String lastPublishedMqttDiagnostic;
     private volatile boolean mqttSilenceReported;
     private volatile boolean brokerFailureReported;
 
@@ -286,6 +292,9 @@ public final class Smt101Plugin implements KioskPlugin {
                     true);
         }
         startEmbeddedMqttBrokerIfEnabled(resolvedConfig);
+        synchronized (stateLock) {
+            publishMqttDiagnostic(true);
+        }
     }
 
     private void startEmbeddedMqttBrokerIfEnabled(final Smt101ResolvedConfig resolvedConfig) {
@@ -408,8 +417,16 @@ public final class Smt101Plugin implements KioskPlugin {
     }
 
     private void handleMqttMessageLocked(String topic, String payload) {
+        if (!running) {
+            return;
+        }
         long now = clock.nowMillis();
         lastMqttActivityMs = now;
+        lastMqttMessageMs = Long.valueOf(now);
+        publishMqttDiagnostic(false);
+        if (!running) {
+            return;
+        }
         mqttRecovery.onPublication(host);
         if (mqttSilenceReported) {
             mqttSilenceReported = false;
@@ -504,6 +521,7 @@ public final class Smt101Plugin implements KioskPlugin {
         }
         checkMqttSilence(now);
         synchronized (stateLock) {
+            publishMqttDiagnostic(true);
             for (Map.Entry<String, Object> entry : lastKnownStates.entrySet()) {
                 String id = entry.getKey();
                 Object state = entry.getValue();
@@ -550,6 +568,43 @@ public final class Smt101Plugin implements KioskPlugin {
 
     private void publishTemperature(Double value) {
         safePublishSensor("temperature", TEMPERATURE_NAME, sensorMetadata("°C", "temperature", 1), value);
+    }
+
+    private void publishMqttDiagnostic(boolean force) {
+        PluginHost pluginHost = host;
+        if (!running || pluginHost == null) {
+            return;
+        }
+        String state;
+        if (!localMqttMode) {
+            state = "Not monitored (external MQTT server)";
+        } else if (lastMqttMessageMs == null) {
+            state = "Waiting for first message";
+        } else {
+            state = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss z", Locale.ROOT)
+                    .format(new Date(lastMqttMessageMs.longValue()));
+        }
+        if (!force && state.equals(lastPublishedMqttDiagnostic)) {
+            return;
+        }
+        try {
+            Map<String, Object> series = new LinkedHashMap<String, Object>();
+            series.put("name", "MQTT publication received");
+            series.put("values", lastMqttMessageMs == null || !localMqttMode
+                    ? Collections.emptyList() : Collections.singletonList(Integer.valueOf(1)));
+            Map<String, Object> chart = new LinkedHashMap<String, Object>();
+            chart.put("title", "Last MQTT message: " + state);
+            chart.put("type", "bar");
+            chart.put("compact", Boolean.TRUE);
+            chart.put("timestamps", lastMqttMessageMs == null || !localMqttMode
+                    ? Collections.emptyList() : Collections.singletonList(lastMqttMessageMs));
+            chart.put("series", Collections.singletonList(series));
+            pluginHost.publishSeries(LAST_MQTT_MESSAGE_KEY, chart);
+            lastPublishedMqttDiagnostic = state;
+            clearPublishFailure("chart." + LAST_MQTT_MESSAGE_KEY);
+        } catch (RuntimeException exception) {
+            reportPublishFailure("chart." + LAST_MQTT_MESSAGE_KEY, state, exception);
+        }
     }
 
     private void publishHumidity(Double value) {
@@ -600,6 +655,8 @@ public final class Smt101Plugin implements KioskPlugin {
         synchronized (stateLock) {
             lastKnownStates.clear();
             lastReceivedMs.clear();
+            lastMqttMessageMs = null;
+            lastPublishedMqttDiagnostic = null;
             rgbBacklightState = Smt101RgbLight.initialState();
             rgbBacklightDetected = false;
             removeEntities();
@@ -616,6 +673,18 @@ public final class Smt101Plugin implements KioskPlugin {
         safeRemoveSwitch("switch2");
         safeRemoveBinarySensor("door1");
         safeRemoveBinarySensor("door2");
+        synchronized (stateLock) {
+            lastMqttMessageMs = null;
+            lastPublishedMqttDiagnostic = null;
+            PluginHost pluginHost = host;
+            if (running && pluginHost != null) {
+                try {
+                    pluginHost.removeSeries(LAST_MQTT_MESSAGE_KEY);
+                } catch (RuntimeException exception) {
+                    safeLog("Failed to remove MQTT diagnostic: " + summarize(exception));
+                }
+            }
+        }
         safeRemoveLight(RGB_BACKLIGHT_KEY);
     }
 

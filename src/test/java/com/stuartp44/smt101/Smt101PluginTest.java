@@ -6,10 +6,13 @@ import java.io.DataOutputStream;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -42,6 +45,7 @@ class Smt101PluginTest {
         settings.put("enableEmbeddedMqttBroker", Boolean.FALSE);
         plugin.start(host, settings);
         assertTrue(host.configured.await(2, TimeUnit.SECONDS));
+        assertTrue(host.diagnosticPublished.await(2, TimeUnit.SECONDS));
         assertTrue(host.published.isEmpty());
     }
 
@@ -84,6 +88,100 @@ class Smt101PluginTest {
         plugin.refreshEntityStates();
         assertTrue(host.logsContaining("No MQTT publications received").isEmpty());
         assertTrue(host.logsContaining("capture broker listening").isEmpty());
+        assertEquals("Not monitored (external MQTT server)", host.diagnostics.get("last_mqtt_message"));
+    }
+
+    @Test
+    void diagnosticWaitsForActualPublicationAndKeepsExactLastMessageTime() throws Exception {
+        try (Socket client = startLocalBrokerClient(false)) {
+            assertTrue(client.isConnected());
+            plugin.refreshEntityStates();
+            assertEquals("Waiting for first message", host.diagnostics.get("last_mqtt_message"));
+
+            now.set(1_792_843_200_000L);
+            plugin.handleMqttMessage("office/unsupported", "unrecognized payload");
+            String expected = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss z", Locale.ROOT)
+                    .format(new Date(now.get()));
+            assertEquals(expected, host.diagnostics.get("last_mqtt_message"));
+            assertEquals(Collections.singletonList(Long.valueOf(now.get())),
+                    host.lastDiagnosticChart.get("timestamps"));
+
+            now.addAndGet(60_000L);
+            plugin.refreshEntityStates();
+            assertEquals(expected, host.diagnostics.get("last_mqtt_message"));
+
+            plugin.handleMqttMessage("office/sensors/temperature", "invalid");
+            assertEquals(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss z", Locale.ROOT)
+                    .format(new Date(now.get())), host.diagnostics.get("last_mqtt_message"));
+        }
+    }
+
+    @Test
+    void diagnosticUpdatesFromAnActualInboundMqttPacket() throws Exception {
+        try (Socket client = startLocalBrokerClient(false)) {
+            plugin.refreshEntityStates();
+            host.diagnosticPublished = new CountDownLatch(1);
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            DataOutputStream body = new DataOutputStream(bytes);
+            body.writeUTF("office/unsupported");
+            body.write("message".getBytes(StandardCharsets.UTF_8));
+            DataOutputStream out = new DataOutputStream(client.getOutputStream());
+            out.writeByte(0x30);
+            out.writeByte(bytes.size());
+            out.write(bytes.toByteArray());
+            out.flush();
+
+            assertTrue(host.diagnosticPublished.await(2, TimeUnit.SECONDS));
+            assertEquals(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss z", Locale.ROOT)
+                    .format(new Date(now.get())), host.diagnostics.get("last_mqtt_message"));
+        }
+    }
+
+    @Test
+    void diagnosticRetainsOnlyLatestValueAndSkipsUnchangedUpdates() throws Exception {
+        try (Socket client = startLocalBrokerClient(false)) {
+            assertTrue(client.isConnected());
+            plugin.refreshEntityStates();
+            int before = host.diagnosticUpdates;
+            for (int index = 0; index < 10_000; index++) {
+                plugin.handleMqttMessage("office/unsupported", "message " + index);
+            }
+            assertEquals(before + 1, host.diagnosticUpdates);
+            assertEquals(1, host.diagnostics.size());
+
+            now.addAndGet(1000L);
+            plugin.handleMqttMessage("office/unsupported", "latest");
+            assertEquals(before + 2, host.diagnosticUpdates);
+            assertEquals(1, host.diagnostics.size());
+        }
+        int beforeStop = host.diagnosticUpdates;
+        plugin.stop();
+        // Kiosk clears charts when it revokes the session; stop must not publish or remove charts.
+        assertEquals(beforeStop, host.diagnosticUpdates);
+        host.diagnostics.clear();
+        assertTrue(host.diagnostics.isEmpty());
+        plugin.handleMqttMessage("office/unsupported", "late");
+        plugin.refreshEntityStates();
+        assertTrue(host.diagnostics.isEmpty());
+    }
+
+    @Test
+    void diagnosticResetsWhenSettingsChange() throws Exception {
+        try (Socket client = startLocalBrokerClient(false)) {
+            assertTrue(client.isConnected());
+            plugin.handleMqttMessage("office/unsupported", "message");
+            host.diagnosticPublished = new CountDownLatch(1);
+            Map<String, Object> settings = new LinkedHashMap<String, Object>();
+            settings.put("enableEmbeddedMqttBroker", Boolean.FALSE);
+            plugin.configure(settings);
+            assertTrue(host.diagnosticPublished.await(2, TimeUnit.SECONDS));
+            assertEquals("Not monitored (external MQTT server)", host.diagnostics.get("last_mqtt_message"));
+        }
+        try (Socket client = startLocalBrokerClient(false)) {
+            assertTrue(client.isConnected());
+            plugin.refreshEntityStates();
+            assertEquals("Waiting for first message", host.diagnostics.get("last_mqtt_message"));
+        }
     }
 
     @Test
@@ -490,6 +588,10 @@ class Smt101PluginTest {
 
     private static final class FakeHost implements PluginHost {
         volatile CountDownLatch configured = new CountDownLatch(1);
+        volatile CountDownLatch diagnosticPublished = new CountDownLatch(1);
+        final Map<String, String> diagnostics = Collections.synchronizedMap(new LinkedHashMap<String, String>());
+        volatile int diagnosticUpdates;
+        volatile Map<String, Object> lastDiagnosticChart;
         final CountDownLatch statusReceived = new CountDownLatch(1);
         volatile CountDownLatch brokerStarted = new CountDownLatch(1);
         volatile CountDownLatch clientConnected = new CountDownLatch(1);
@@ -523,6 +625,33 @@ class Smt101PluginTest {
                 throw new IllegalStateException(message);
             }
             published.add(id + "=" + state);
+        }
+
+        @Override
+        public void publishSeries(String key, Map<String, Object> chart) {
+            assertEquals("last_mqtt_message", key);
+            assertEquals(Boolean.TRUE, chart.get("compact"));
+            assertEquals("bar", chart.get("type"));
+            String title = (String) chart.get("title");
+            assertTrue(title.startsWith("Last MQTT message: "));
+            assertTrue(title.length() <= 80);
+            List<?> timestamps = (List<?>) chart.get("timestamps");
+            List<?> series = (List<?>) chart.get("series");
+            assertTrue(timestamps.size() <= 1);
+            assertEquals(1, series.size());
+            assertEquals(timestamps.size(), ((List<?>) ((Map<?, ?>) series.get(0)).get("values")).size());
+            if (rejection != null) {
+                throw new IllegalStateException(rejection);
+            }
+            lastDiagnosticChart = new LinkedHashMap<String, Object>(chart);
+            diagnostics.put(key, title.substring("Last MQTT message: ".length()));
+            diagnosticUpdates++;
+            diagnosticPublished.countDown();
+        }
+
+        @Override
+        public void removeSeries(String key) {
+            diagnostics.remove(key);
         }
 
         @Override
