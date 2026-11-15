@@ -9,12 +9,14 @@ installation, settings, and day-to-day use, see the [plugin README](../README.md
 | Firmware/build | Identification | Verification |
 | --- | --- | --- |
 | `ZX-SMT1019-R157-V1.0A-10.1-GG-K1.29U-20260707` | SMT1019-R157 V1.0A | Original confirmed hardware, including automatic OEM MQTT recovery |
+| `ZX-SMT1019-R157-V1.0A-10.1-GG-K1.29U-20260205` | SMT1019-R157 V1.0A (earlier build); Android model `rk3576_u`, product/device `WF2489T`, manufacturer `Electron`, brand `Apolosign`; Android 14 / API 34, `user` build | Inspected through ADB on 15 November 2026: `/system/app/BroadcastInterFace/BroadcastInterFace.apk` (versionCode 20) exposes `com.broadcastinterface/.ApiSystemService` with descriptor `com.broadcastinterface.ISystemInterface`, and transaction 11 is `setSystemProperties(String, String)` (`SystemProperties.set`, reply `writeNoException` + `int` 1/0); `/vendor/etc/init/hw/init.rk30board.rc` defines `iot_mqtt_client` as `oneshot` with `on property:persist.start.mqtt=1` → `start iot_mqtt_client` |
 | `ZX-SMT1019-R157-V2.0-10.1-GG-K2.15U-20260916` | SMT1019-R157 V2.0; Android model `rk3576_u`, product/device `WF2489T`, manufacturer `Electron`, brand `Apolosign`; Android 14 / API 34 | Identified through ADB on 13 October 2026; automatic OEM MQTT recovery and resumed sensor publications verified on 17 October 2026 |
 
 The V2.0 unit uses the same observed sensor MQTT format. Inspection on
 17 October 2026 confirmed the same OEM recovery Binder protocol and MQTT
-init-service start trigger, so both exact builds above are allowlisted for
-automatic recovery. RGB, switch, and door support on this variant is not
+init-service start trigger, so the exact builds above are allowlisted for
+automatic recovery. The earlier V1.0A build (`K1.29U-20260205`) was added after
+the same Binder transaction and init trigger were confirmed on that build. RGB, switch, and door support on this variant is not
 fully hardware-tested; switch and door status publications were observed
 after recovery, but physical input changes, switch commands, and RGB
 operation remain unverified. Entities are discovered only when their valid
