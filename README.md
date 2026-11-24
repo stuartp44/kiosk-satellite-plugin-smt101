@@ -56,9 +56,10 @@ verification finish. See [release workflow details](docs/TECHNICAL.md#automated-
 1. Use the install button above, or download a plugin ZIP from
    [GitHub Releases](https://github.com/stuartp44/kiosk-satellite-plugin-smt101/releases)
    and install it through Kiosk Satellite's Plugin Manager.
-2. Configure the tablet and plugin as described below.
-3. Confirm that real sensor readings appear in Kiosk Satellite
-   and that the plugin log reports an MQTT client connection and publications.
+2. Enable the plugin in Kiosk Satellite, then follow the [setup instructions](#setup).
+3. Confirm that readings appear in Kiosk Satellite. If you use Home Assistant,
+   confirm that the plugin's available entities appear there with the
+   `SMT101x` prefix.
 
 When testing a local ZIP on a fleet-managed tablet, disable plugin
 synchronization first; otherwise the leader can replace it with the
@@ -66,18 +67,35 @@ configured release.
 
 ## Setup
 
-The local broker starts automatically. Configure the tablet's
-MQTT server as `127.0.0.1`, port `1883`. The plugin receives sensor and door
-readings and exposes switch and RGB controls through Kiosk Satellite.
-MQTT runs internally on the tablet; no separate MQTT server is required.
+### How the connections work
 
-#### Tablet MQTT settings
+There are two separate connections:
 
-Open **Android Settings > System > MQTT**. On the confirmed firmware,
-tapping the MQTT row while enabled turns the publisher off; tapping it
-again opens the **Set Mqtt** configuration dialog. This briefly interrupts
-sensor publications. If automatic re-enabling is enabled, turn that plugin
-option off temporarily so recovery does not interfere with configuration.
+1. The tablet's built-in MQTT client sends sensor and status messages to the
+   plugin's embedded MQTT broker at `127.0.0.1:1883`. The broker starts when
+   the plugin is enabled. This address is the tablet's own loopback address.
+2. The plugin turns those messages into entities in Kiosk Satellite. Kiosk
+   Satellite's built-in ESPHome API then exposes kiosk entities to Home
+   Assistant. Home Assistant connects to Kiosk Satellite as an ESPHome device;
+   it does **not** connect to the plugin's MQTT broker.
+
+Controls travel back through Kiosk Satellite and the plugin to the tablet's
+built-in MQTT client. You do not need a separate MQTT broker, ESPHome firmware,
+or an ESPHome YAML configuration for this setup.
+
+<a id="tablet-mqtt-settings"></a>
+
+### 1. Point the tablet's MQTT client to the plugin
+
+Open **Android Settings > System > MQTT** on the tablet. Set the built-in
+client to the values below so it sends messages to the plugin's local broker.
+Do not use the Home Assistant server's address here.
+
+On the confirmed firmware, tapping the MQTT row while enabled turns the
+publisher off; tapping it again opens the **Set Mqtt** configuration dialog.
+This briefly interrupts sensor publications. If automatic re-enabling is
+enabled, turn that plugin option off temporarily so recovery does not
+interfere with configuration.
 
 | Field | Value |
 | --- | --- |
@@ -90,11 +108,12 @@ option off temporarily so recovery does not interfere with configuration.
 
 ![Local MQTT configuration dialog captured from the SMT101x tablet](docs/images/local-mqtt-settings.png)
 
-Tap **OK** to save and enable the built-in MQTT client. Ensure the MQTT switch
-is on when finished. The switch indicates that MQTT is enabled, not that
-sensor publications are reaching the plugin.
+Tap **OK** to save, then ensure the built-in MQTT client is on. The switch
+shows that MQTT is enabled; it does not confirm that messages are reaching
+the plugin. Check the plugin status or log for a client connection and
+incoming publications.
 
-#### Plugin settings
+### 2. Configure optional plugin recovery
 
 | Setting | Local-mode value |
 | --- | --- |
@@ -107,6 +126,27 @@ Leave it off to respect intentional MQTT disables.
 The plugin does not rewrite Android's MQTT connection settings. If you
 previously used an external server, change the tablet's server to
 `127.0.0.1:1883` yourself. Previously saved broker-disable settings are ignored.
+
+### 3. Expose the kiosk entities to Home Assistant
+
+First, in Kiosk Satellite, open **Settings > ESPHome**, turn on
+**Enable ESPHome**, and make a note of the encryption key shown there. Ensure
+**Expose kiosk entities** is enabled; it allows Kiosk Satellite entities,
+including entities provided by plugins, to be sent to Home Assistant.
+
+Then, in Home Assistant, open **Settings > Devices & services** and configure
+the discovered ESPHome device for Kiosk Satellite using that key. The device
+is Kiosk Satellite (typically named `ks-<device name>`), not a separate
+SMT101x ESPHome device. If it is not discovered automatically, follow the
+[Kiosk Satellite ESPHome guide](https://kiosksatellite.com/docs/esphome/) or
+the [Home Assistant ESPHome integration instructions](https://www.home-assistant.io/integrations/esphome/)
+to add it manually using the kiosk's network address and ESPHome API port
+(default `6053`, unless changed in Kiosk Satellite).
+
+Once connected, the entities provided by this plugin appear in Home Assistant
+with the `SMT101x` name prefix and can be used in automations. An entity only
+appears after the tablet publishes a valid reading or status for that feature;
+available entities therefore depend on the tablet's hardware and firmware.
 
 ## Configuration reference
 
@@ -149,8 +189,9 @@ tablet remains to be verified.
 On startup or after settings changes, the info bar shows
 `Detecting device capabilities, please wait.`
 If no MQTT publications arrive within 60 seconds, it shows a setup error with
-a link to this README's Tablet MQTT settings section. A connected client alone does not count
-as a publication. The first publication clears the startup error; valid readings
+a link to the [tablet MQTT setup](#1-point-the-tablets-mqtt-client-to-the-plugin).
+A connected client alone does not count as a publication. The first
+publication clears the startup error; valid readings
 then identify the capabilities actually present. Settings changes restart the wait.
 Automatic recovery progress stays in the log and cannot clear this error before
 MQTT publications arrive.
