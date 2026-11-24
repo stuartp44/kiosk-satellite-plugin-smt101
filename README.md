@@ -83,6 +83,8 @@ Controls travel back through Kiosk Satellite and the plugin to the tablet's
 built-in MQTT client. You do not need a separate MQTT broker, ESPHome firmware,
 or an ESPHome YAML configuration for this setup.
 
+<a id="tablet-mqtt-settings"></a>
+
 ### 1. Point the tablet's MQTT client to the plugin
 
 Open **Android Settings > System > MQTT** on the tablet. Set the built-in
